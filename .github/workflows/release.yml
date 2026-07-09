@@ -16,6 +16,10 @@ on:
         description: "Version to release (semver, e.g. 0.1.0)"
         required: true
         type: string
+      dry_run:
+        description: "Dry run: build + package + validate only. No bump, tag, or publish."
+        type: boolean
+        default: false
 
 # Least privilege by default; each job opts into exactly what it needs.
 permissions: {}
@@ -80,6 +84,7 @@ jobs:
       - name: Set version (Cargo + package.json)
         run: ./scripts/set-version.sh "$VERSION"
       - name: Commit + tag
+        if: ${{ !inputs.dry_run }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -123,16 +128,19 @@ jobs:
       # ---- Publish: crate first, then npm (both via OIDC, no tokens) ----
       - name: crates.io auth (OIDC, short-lived token)
         id: crates-auth
+        if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
       - name: Publish ticket-core to crates.io
-        run: cargo publish -p ticket-core
+        # dry run: package + verify build only (no registry auth, no upload).
+        run: cargo publish -p ticket-core ${{ inputs.dry_run && '--dry-run --allow-dirty' || '' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
 
       - name: Ensure npm supports Trusted Publishing (>= 11.5.1)
         run: npm install -g npm@latest
-      - name: Publish @ticket-editor/vue to npm (OIDC + provenance)
+      - name: Publish @ticket-editor/vue to npm
         working-directory: packages/ticket-editor
-        # --ignore-scripts: dist + src/wasm are already built above; skip prepack
-        # so it isn't rebuilt. Provenance is attested from this workflow run.
-        run: npm publish --provenance --access public --ignore-scripts
+        # --ignore-scripts: dist + src/wasm are already built above; skip prepack.
+        # Real run adds provenance (attested from this workflow); dry run only
+        # validates the tarball and never uploads or authenticates.
+        run: npm publish --access public --ignore-scripts ${{ inputs.dry_run && '--dry-run' || '--provenance' }}
