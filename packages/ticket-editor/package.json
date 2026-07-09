@@ -4,6 +4,7 @@
   "description": "Embeddable Vue 3 ticket-format editor with a 1:1 wasm preview. Zero coupling to any host UI kit.",
   "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@11.5.0",
   "files": [
     "dist",
     "src/wasm"
@@ -22,6 +23,7 @@
   "scripts": {
     "dev": "vite --host --port 5199",
     "build": "vue-tsc -b && vite build",
+    "build:demo": "BUILD_DEMO=1 vite build",
     "build:wasm": "../../scripts/build-wasm.sh",
     "type-check": "vue-tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,vue}\" \"demo/**/*.{ts,vue}\""

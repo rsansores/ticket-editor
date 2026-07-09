@@ -3,6 +3,9 @@
 A monospace-grid **receipt / ticket editor** for thermal printers, with a live
 preview that is **byte-for-byte identical** to what prints.
 
+**▶ [Try the editor live](https://rsansores.github.io/ticket-editor/)** — it runs
+entirely in your browser (the renderer is compiled to WebAssembly; no server).
+
 ![The editor: dragging and resizing an element while the preview updates live](docs/demo.gif)
 
 Design on a grid — drag variables, static text, logos and QR codes; add loops

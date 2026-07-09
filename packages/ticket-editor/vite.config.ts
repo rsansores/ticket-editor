@@ -2,26 +2,44 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'node:path'
 
-// Two modes:
-//   `vite`        -> dev server serving the standalone demo (index.html)
-//   `vite build`  -> library build for embedding into a host Vue app
-export default defineConfig(({ command }) => ({
-  plugins: [vue()],
-  build:
-    command === 'build'
-      ? {
-          lib: {
-            entry: resolve(__dirname, 'src/index.ts'),
-            name: 'TicketEditor',
-            fileName: 'ticket-editor',
-          },
-          rollupOptions: {
-            // Vue is provided by the host app — never bundle it.
-            external: ['vue'],
-            output: { globals: { vue: 'Vue' } },
-          },
-        }
-      : undefined,
-  // The .wasm file must be served as an asset in dev.
-  assetsInclude: ['**/*.wasm'],
-}))
+// Three modes:
+//   `vite`                 -> dev server serving the standalone demo (index.html)
+//   `vite build`           -> library build for embedding into a host Vue app
+//   `BUILD_DEMO=1 vite build` -> static demo SPA for GitHub Pages (dist-demo/)
+//
+// The demo is 100% client-side (the renderer runs in the browser via wasm), so
+// it deploys as plain static files.
+const isDemo = process.env.BUILD_DEMO === '1'
+
+export default defineConfig(({ command }) => {
+  if (isDemo) {
+    return {
+      plugins: [vue()],
+      // Served from https://<user>.github.io/ticket-editor/ — set the base path.
+      base: process.env.DEMO_BASE ?? '/ticket-editor/',
+      build: { outDir: 'dist-demo', emptyOutDir: true },
+      assetsInclude: ['**/*.wasm'],
+    }
+  }
+
+  return {
+    plugins: [vue()],
+    build:
+      command === 'build'
+        ? {
+            lib: {
+              entry: resolve(__dirname, 'src/index.ts'),
+              name: 'TicketEditor',
+              fileName: 'ticket-editor',
+            },
+            rollupOptions: {
+              // Vue is provided by the host app — never bundle it.
+              external: ['vue', 'vue-i18n'],
+              output: { globals: { vue: 'Vue', 'vue-i18n': 'VueI18n' } },
+            },
+          }
+        : undefined,
+    // The .wasm file must be served as an asset in dev.
+    assetsInclude: ['**/*.wasm'],
+  }
+})

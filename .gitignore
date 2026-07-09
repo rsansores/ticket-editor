@@ -1,6 +1,7 @@
 /target
 **/node_modules
 **/dist
+**/dist-demo
 *.png
 !crates/ticket-core/assets/*
 !docs/*.png
