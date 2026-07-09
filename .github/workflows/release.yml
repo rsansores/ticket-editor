@@ -93,20 +93,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ---- Bump both versions in lockstep, commit + tag ----
+      # ---- Bump both versions in lockstep, in the working tree only. NOT
+      #      committed yet: git is updated last, after both registries accept,
+      #      so a failed publish leaves the repo clean and retryable. ----
       - name: Set version (Cargo + package.json)
         run: ./scripts/set-version.sh "$VERSION"
-      - name: Commit + tag
-        if: ${{ !inputs.dry_run }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "release: v$VERSION"
-          git tag -a "v$VERSION" -m "v$VERSION"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-          git push origin "v$VERSION"
 
-      # ---- Toolchains ----
+      # ---- Toolchains. Node 24 ships npm >= 11.5.1 (required for Trusted
+      #      Publishing). Do NOT `npm install -g npm@latest`: self-upgrading the
+      #      bundled npm corrupts its bundled `sigstore` dep and breaks publish. ----
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: wasm32-unknown-unknown
@@ -116,12 +111,14 @@ jobs:
           version: 11
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
           cache: pnpm
           cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
+      - name: npm version (must be >= 11.5.1 for Trusted Publishing)
+        run: npm --version
 
-      # ---- Build BOTH artifacts before publishing anything (fail early) ----
+      # ---- Build BOTH artifacts before publishing anything ----
       - name: Resolve wasm-bindgen version
         id: wb
         run: |
@@ -138,22 +135,32 @@ jobs:
           pnpm build:wasm
           pnpm build
 
-      # ---- Publish: crate first, then npm (both via OIDC, no tokens) ----
+      # ---- Publish (both via OIDC, no stored tokens). npm first — historically
+      #      the flakier of the two — so if it fails, nothing is left published. ----
+      - name: Publish @ticket-editor/vue to npm
+        working-directory: packages/ticket-editor
+        # --ignore-scripts: dist + src/wasm already built. Real run attaches
+        # provenance; dry run only validates the tarball (no upload/auth).
+        run: npm publish --access public --ignore-scripts ${{ inputs.dry_run && '--dry-run' || '--provenance' }}
+
       - name: crates.io auth (OIDC, short-lived token)
         id: crates-auth
         if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
       - name: Publish ticket-core to crates.io
-        # dry run: package + verify build only (no registry auth, no upload).
-        run: cargo publish -p ticket-core ${{ inputs.dry_run && '--dry-run --allow-dirty' || '' }}
+        # Publishes from the version-bumped (uncommitted) tree; dry run only
+        # packages + verifies the build.
+        run: cargo publish -p ticket-core --allow-dirty ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
 
-      - name: Ensure npm supports Trusted Publishing (>= 11.5.1)
-        run: npm install -g npm@latest
-      - name: Publish @ticket-editor/vue to npm
-        working-directory: packages/ticket-editor
-        # --ignore-scripts: dist + src/wasm are already built above; skip prepack.
-        # Real run adds provenance (attested from this workflow); dry run only
-        # validates the tarball and never uploads or authenticates.
-        run: npm publish --access public --ignore-scripts ${{ inputs.dry_run && '--dry-run' || '--provenance' }}
+      # ---- Both registries accepted — now record the release in git ----
+      - name: Commit + tag + push
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "v$VERSION"
