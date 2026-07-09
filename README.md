@@ -3,7 +3,7 @@
 A monospace-grid **receipt / ticket editor** for thermal printers, with a live
 preview that is **byte-for-byte identical** to what prints.
 
-![The editor: a variable tree, the grid canvas, and a live 1:1 preview](docs/editor.png)
+![The editor: dragging and resizing an element while the preview updates live](docs/demo.gif)
 
 Design on a grid — drag variables, static text, logos and QR codes; add loops
 and conditionals — and the panel on the right shows exactly what the printer will
