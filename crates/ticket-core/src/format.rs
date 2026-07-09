@@ -106,7 +106,11 @@ pub fn format_date(raw: &str, pattern: &str) -> String {
     let hour = pad2(get(3));
     let min = pad2(get(4));
     let sec = pad2(get(5));
-    let yy = if year.len() >= 2 { &year[year.len() - 2..] } else { year };
+    let yy = if year.len() >= 2 {
+        &year[year.len() - 2..]
+    } else {
+        year
+    };
 
     // Longest tokens first so `YYYY` is consumed before `YY`.
     pattern

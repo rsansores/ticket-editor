@@ -48,7 +48,10 @@ pub use schema::{
 
 /// Convenience: render straight from JSON strings (the shape the wasm/HTTP
 /// boundaries actually deal in). Returns PNG bytes.
-pub fn render_json(doc_json: &str, variables_json: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn render_json(
+    doc_json: &str,
+    variables_json: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let doc: TicketDoc = serde_json::from_str(doc_json)?;
     let variables: serde_json::Value = if variables_json.trim().is_empty() {
         serde_json::Value::Null

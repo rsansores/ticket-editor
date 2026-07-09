@@ -1,0 +1,15 @@
+[package]
+name = "ticket-printable-derive"
+description = "Derive macro for `ticket_printable::Printable` — projects an annotated Rust struct into the variables JSON a TicketDoc renders against."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

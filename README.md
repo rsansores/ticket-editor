@@ -193,11 +193,34 @@ configured in the drawer — no template language to learn:
 ## Repository layout
 
 ```
-crates/ticket-core     # the renderer + schema (native + wasm), the crates.io package
-crates/ticket-wasm     # wasm-bindgen wrapper (build tool; produces the browser bundle)
-packages/ticket-editor # the Vue editor (@ticket-editor/vue), embeds the wasm
-scripts/build-wasm.sh  # rebuild the browser wasm bundle from ticket-core
+crates/ticket-core            # the renderer + schema (native + wasm), the crates.io package
+crates/ticket-wasm            # wasm-bindgen wrapper (build tool; produces the browser bundle)
+crates/ticket-printable       # derive an annotated model into the variables JSON (DB/framework-agnostic)
+crates/ticket-printable-derive# the #[derive(Printable)] proc-macro
+packages/ticket-editor        # the Vue editor (@ticket-editor/vue), embeds the wasm
+scripts/build-wasm.sh         # rebuild the browser wasm bundle from ticket-core
 ```
+
+## Feeding the variable tree from your models — `ticket-printable`
+
+Instead of hand-writing the `variables` object (and a matching sample that
+drifts), annotate your existing model structs and derive `Printable`. One
+definition yields both the editor's sample tree and the real render data, so
+they can't diverge. See [`crates/ticket-printable`](crates/ticket-printable) —
+it's DB- and framework-agnostic (annotate a struct, get JSON).
+
+## Computed values (e.g. a maps QR)
+
+Derived fields are authored in the editor, not the backend: any **text** or
+**literal QR** value may embed `{dotted.path}` tokens, resolved at render time
+by `ticket-core`. Because the same renderer runs in the browser preview and on
+the device, a computed value looks identical in both. Example QR value:
+
+```
+https://maps.google.com/?q={reception_unit.latitude},{reception_unit.longitude}
+```
+
+Literal braces are written `{{` / `}}`.
 
 ## Develop
 

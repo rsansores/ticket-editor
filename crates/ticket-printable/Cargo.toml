@@ -1,0 +1,25 @@
+[package]
+name = "ticket-printable"
+description = "Project an annotated Rust struct into the variables JSON a ticket-core TicketDoc renders against — DB- and framework-agnostic."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+ticket-printable-derive = { path = "../ticket-printable-derive", version = "0.2", optional = true }
+
+# Optional leaf mappings for well-known crates. Enable the ones your models use
+# and those types map automatically (Uuid -> text, DateTime -> date,
+# Decimal -> number); leave them off and implement `Printable` yourself.
+uuid = { version = "1", optional = true, default-features = false }
+chrono = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
+rust_decimal = { version = "1", optional = true, default-features = false }
+
+[features]
+default = ["derive"]
+derive = ["dep:ticket-printable-derive"]
+uuid = ["dep:uuid"]
+chrono = ["dep:chrono"]
+rust_decimal = ["dep:rust_decimal"]

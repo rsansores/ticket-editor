@@ -31,7 +31,9 @@ pub fn decode_png_gray(data: &str) -> Result<(Vec<u8>, u32, u32), String> {
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     // Cap total decode memory so a small file with a huge IHDR (a decompression
     // bomb) can't force a giant allocation before any pixel is validated.
-    decoder.set_limits(png::Limits { bytes: MAX_DECODE_BYTES });
+    decoder.set_limits(png::Limits {
+        bytes: MAX_DECODE_BYTES,
+    });
     let mut reader = decoder.read_info().map_err(|e| format!("png: {e}"))?;
     // Reject absurd source dimensions declared in the header, up front.
     {
@@ -45,15 +47,20 @@ pub fn decode_png_gray(data: &str) -> Result<(Vec<u8>, u32, u32), String> {
         .output_buffer_size()
         .ok_or_else(|| "png: output buffer size unavailable".to_string())?;
     let mut buf = vec![0u8; out_size];
-    let info = reader.next_frame(&mut buf).map_err(|e| format!("png: {e}"))?;
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("png: {e}"))?;
     let (w, h) = (info.width, info.height);
     let px = &buf[..info.buffer_size()];
 
     let n = (w as usize) * (h as usize);
     let mut gray = vec![255u8; n];
-    let lum = |r: u8, g: u8, b: u8| -> f32 { 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32 };
+    let lum =
+        |r: u8, g: u8, b: u8| -> f32 { 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32 };
     match info.color_type {
-        png::ColorType::Grayscale => gray[..n.min(px.len())].copy_from_slice(&px[..n.min(px.len())]),
+        png::ColorType::Grayscale => {
+            gray[..n.min(px.len())].copy_from_slice(&px[..n.min(px.len())])
+        }
         png::ColorType::GrayscaleAlpha => {
             for i in 0..n {
                 let (v, a) = (px[i * 2] as f32, px[i * 2 + 1] as f32 / 255.0);
@@ -79,7 +86,12 @@ pub fn decode_png_gray(data: &str) -> Result<(Vec<u8>, u32, u32), String> {
 
 /// Bilinear resize of a grayscale buffer to `dw × dh`.
 pub fn resize_gray(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
-    let (sw, sh, dw, dh) = (sw as usize, sh as usize, dw.max(1) as usize, dh.max(1) as usize);
+    let (sw, sh, dw, dh) = (
+        sw as usize,
+        sh as usize,
+        dw.max(1) as usize,
+        dh.max(1) as usize,
+    );
     if sw == 0 || sh == 0 {
         return vec![255u8; dw * dh];
     }

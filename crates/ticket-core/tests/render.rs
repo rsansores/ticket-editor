@@ -25,7 +25,10 @@ fn renders_valid_png() {
     let doc = sample_doc();
     let png = render_png(&doc, &serde_json::Value::Null).unwrap();
     // PNG magic number.
-    assert_eq!(&png[0..8], &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+    assert_eq!(
+        &png[0..8],
+        &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]
+    );
     assert!(png.len() > 100, "png suspiciously small");
 }
 
@@ -34,17 +37,16 @@ fn is_deterministic() {
     let doc = sample_doc();
     let a = render_png(&doc, &serde_json::Value::Null).unwrap();
     let b = render_png(&doc, &serde_json::Value::Null).unwrap();
-    assert_eq!(a, b, "same input must yield identical bytes (parity depends on this)");
+    assert_eq!(
+        a, b,
+        "same input must yield identical bytes (parity depends on this)"
+    );
 }
 
 #[test]
 fn real_data_beats_fake() {
     let doc = sample_doc();
-    let with_data = render_png(
-        &doc,
-        &json!({ "sale": { "total_amount": 100.23 } }),
-    )
-    .unwrap();
+    let with_data = render_png(&doc, &json!({ "sale": { "total_amount": 100.23 } })).unwrap();
     let with_fake = render_png(&doc, &serde_json::Value::Null).unwrap();
     // The amount slot differs, so the rasters must differ.
     assert_ne!(with_data, with_fake);
@@ -86,7 +88,10 @@ fn wrap_flows_onto_multiple_lines() {
     let wrapped = render_png(&doc(true), &data).unwrap();
     let clipped = render_png(&doc(false), &data).unwrap();
     assert_ne!(wrapped, clipped);
-    assert!(wrapped.len() > clipped.len(), "wrapped should occupy more rows");
+    assert!(
+        wrapped.len() > clipped.len(),
+        "wrapped should occupy more rows"
+    );
 }
 
 #[test]
@@ -119,7 +124,11 @@ fn number_and_date_formatting_apply() {
         ]
     }))
     .unwrap();
-    let formatted = render_png(&doc, &json!({ "amt": 1234567.899, "when": "2030-01-02 03:04:05" })).unwrap();
+    let formatted = render_png(
+        &doc,
+        &json!({ "amt": 1234567.899, "when": "2030-01-02 03:04:05" }),
+    )
+    .unwrap();
     let raw = render_png(&doc, &json!({ "amt": "x", "when": "x" })).unwrap();
     // Formatted numbers/dates differ from the raw fallback rendering.
     assert_ne!(formatted, raw);
@@ -162,7 +171,10 @@ fn loop_repeats_and_flows_content_below() {
     let two = render_png(&doc, &data(2)).unwrap();
     let five = render_png(&doc, &data(5)).unwrap();
     assert_ne!(two, five);
-    assert!(five.len() > two.len(), "more loop items should make a taller ticket");
+    assert!(
+        five.len() > two.len(),
+        "more loop items should make a taller ticket"
+    );
 }
 
 #[test]
@@ -179,11 +191,22 @@ fn loop_absolute_path_gets_index_substituted() {
         ]
     }))
     .unwrap();
-    let distinct = render_png(&doc, &json!({ "cart": [{ "name": "AAA" }, { "name": "BBB" }] })).unwrap();
-    let same = render_png(&doc, &json!({ "cart": [{ "name": "AAA" }, { "name": "AAA" }] })).unwrap();
+    let distinct = render_png(
+        &doc,
+        &json!({ "cart": [{ "name": "AAA" }, { "name": "BBB" }] }),
+    )
+    .unwrap();
+    let same = render_png(
+        &doc,
+        &json!({ "cart": [{ "name": "AAA" }, { "name": "AAA" }] }),
+    )
+    .unwrap();
     // If index substitution works, distinct items render differently than two
     // identical items; if it were pinned to index 0, both would show "AAA","AAA".
-    assert_ne!(distinct, same, "each loop row must show its own item via index substitution");
+    assert_ne!(
+        distinct, same,
+        "each loop row must show its own item via index substitution"
+    );
 }
 
 #[test]
@@ -200,7 +223,10 @@ fn conditional_region_collapses_when_false() {
     .unwrap();
     let shown = render_png(&doc, &json!({ "discount": 10 })).unwrap();
     let hidden = render_png(&doc, &json!({ "discount": 0 })).unwrap();
-    assert_ne!(shown, hidden, "collapsing the discount band must change the render");
+    assert_ne!(
+        shown, hidden,
+        "collapsing the discount band must change the render"
+    );
     assert!(shown.len() > hidden.len(), "hidden band => shorter ticket");
 }
 
@@ -250,20 +276,29 @@ fn adversarial_inputs_do_not_panic() {
         "elements": [{ "id": "i", "row": 0, "col": 0, "type": "image", "data": "x", "w": 100000, "h": 100000 }]
     }))
     .unwrap();
-    assert!(matches!(render_png(&big_img, &serde_json::Value::Null), Err(RenderError::TooLarge { .. })));
+    assert!(matches!(
+        render_png(&big_img, &serde_json::Value::Null),
+        Err(RenderError::TooLarge { .. })
+    ));
 
     let big_qr: TicketDoc = serde_json::from_value(json!({
         "version": 1, "paper": { "width_chars": 30 },
         "elements": [{ "id": "q", "row": 0, "col": 0, "type": "qr", "value": "hi", "size": 100000 }]
     }))
     .unwrap();
-    assert!(matches!(render_png(&big_qr, &serde_json::Value::Null), Err(RenderError::TooLarge { .. })));
+    assert!(matches!(
+        render_png(&big_qr, &serde_json::Value::Null),
+        Err(RenderError::TooLarge { .. })
+    ));
 
     let huge_paper: TicketDoc = serde_json::from_value(json!({
         "version": 1, "paper": { "width_chars": 4000000000u32 }
     }))
     .unwrap();
-    assert!(matches!(render_png(&huge_paper, &serde_json::Value::Null), Err(RenderError::TooLarge { .. })));
+    assert!(matches!(
+        render_png(&huge_paper, &serde_json::Value::Null),
+        Err(RenderError::TooLarge { .. })
+    ));
 }
 
 #[test]

@@ -107,6 +107,79 @@ pub fn value_to_string(v: &Value) -> String {
     }
 }
 
+/// Interpolate `{dotted.path}` tokens in a template string against the data.
+///
+/// This is what lets a designer build a *computed* value in the editor without
+/// any backend code — e.g. a QR whose value is
+/// `https://maps.google.com/?q={reception_unit.latitude},{reception_unit.longitude}`,
+/// or a text line `Total: {sale.total}`. Because it runs here in `ticket-core`,
+/// the browser preview (wasm) and the printed ticket (native) evaluate it
+/// identically — parity is preserved by construction.
+///
+/// Each token resolves through the same path/loop logic as a `Variable`
+/// element, falling back to a deterministic fake when the path is absent (so the
+/// editor preview is never blank). Literal braces are written `{{` and `}}`.
+/// An unterminated `{` is emitted verbatim.
+pub fn interpolate(template: &str, loop_ctx: LoopCtx, root: &Value) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                out.push('{');
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                out.push('}');
+            }
+            '{' => {
+                let mut path = String::new();
+                let mut closed = false;
+                for pc in chars.by_ref() {
+                    if pc == '}' {
+                        closed = true;
+                        break;
+                    }
+                    path.push(pc);
+                }
+                if !closed {
+                    // Unterminated token: emit literally so nothing is silently lost.
+                    out.push('{');
+                    out.push_str(&path);
+                    break;
+                }
+                let key = path.trim();
+                let value = match resolve_loop(loop_ctx, root, key) {
+                    Some(v) => value_to_string(v),
+                    None => fake_for(key),
+                };
+                out.push_str(&value);
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// True when a template contains at least one `{path}` token (cheap pre-check so
+/// plain literals skip interpolation entirely).
+pub fn has_tokens(template: &str) -> bool {
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' {
+            if bytes[i + 1] == b'{' {
+                i += 2;
+                continue;
+            }
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Produce a stable fake value for a path when no real data is available.
 /// The last path segment hints at the type ("amount"/"total" -> money,
 /// "time"/"date" -> timestamp, otherwise a short token).
@@ -140,4 +213,33 @@ fn stable_hash(s: &str) -> u64 {
         h = h.wrapping_mul(0x100000001b3);
     }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn interpolate_resolves_tokens_and_escapes() {
+        let data = json!({ "ru": { "lat": "19.4", "lng": "-99.1" }, "sale": { "total": 42 } });
+        assert_eq!(
+            interpolate("q={ru.lat},{ru.lng}", None, &data),
+            "q=19.4,-99.1"
+        );
+        assert_eq!(interpolate("Total: {sale.total}", None, &data), "Total: 42");
+        // Literal braces.
+        assert_eq!(interpolate("{{literal}}", None, &data), "{literal}");
+        // No tokens is a passthrough.
+        assert_eq!(interpolate("plain text", None, &data), "plain text");
+        // Unterminated token emitted verbatim, nothing lost.
+        assert_eq!(interpolate("a {oops", None, &data), "a {oops");
+    }
+
+    #[test]
+    fn has_tokens_distinguishes_literals() {
+        assert!(has_tokens("a {b} c"));
+        assert!(!has_tokens("a {{b}} c"));
+        assert!(!has_tokens("plain"));
+    }
 }
