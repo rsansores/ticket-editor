@@ -1,0 +1,138 @@
+name: Release
+
+# Manual, click-to-release. Publishes ticket-core (crates.io) and
+# @ticket-editor/vue (npm) in lockstep, using OIDC Trusted Publishing so NO
+# long-lived registry tokens are ever stored in this repo. The actual publish
+# job runs in the protected `release` environment, so it waits for your manual
+# approval before anything is pushed to a registry.
+#
+# Third-party actions are pinned to full commit SHAs (immutable) — a hijacked
+# tag cannot inject code into the publish job. Dependabot proposes updates.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (semver, e.g. 0.1.0)"
+        required: true
+        type: string
+
+# Least privilege by default; each job opts into exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Validate version is semver
+        run: |
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
+            || { echo "::error::'$VERSION' is not a valid semver version"; exit 1; }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Rust tests + lint
+        run: |
+          cargo test -p ticket-core
+          cargo clippy -p ticket-core --all-targets
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
+      - name: Editor typecheck + lint
+        working-directory: packages/ticket-editor
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm type-check
+          pnpm lint
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    # Protected environment: configure required reviewers in repo Settings so
+    # this job pauses for your approval before it publishes anything.
+    environment: release
+    permissions:
+      contents: write # push the version-bump commit + tag
+      id-token: write # OIDC for crates.io AND npm — no stored secrets
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      # ---- Bump both versions in lockstep, commit + tag ----
+      - name: Set version (Cargo + package.json)
+        run: ./scripts/set-version.sh "$VERSION"
+      - name: Commit + tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "v$VERSION"
+
+      # ---- Toolchains ----
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+          cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
+
+      # ---- Build BOTH artifacts before publishing anything (fail early) ----
+      - name: Resolve wasm-bindgen version
+        id: wb
+        run: |
+          v=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+      - name: Build renderer wasm + editor dist
+        working-directory: packages/ticket-editor
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build:wasm
+          pnpm build
+
+      # ---- Publish: crate first, then npm (both via OIDC, no tokens) ----
+      - name: crates.io auth (OIDC, short-lived token)
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
+      - name: Publish ticket-core to crates.io
+        run: cargo publish -p ticket-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+
+      - name: Ensure npm supports Trusted Publishing (>= 11.5.1)
+        run: npm install -g npm@latest
+      - name: Publish @ticket-editor/vue to npm (OIDC + provenance)
+        working-directory: packages/ticket-editor
+        # --ignore-scripts: dist + src/wasm are already built above; skip prepack
+        # so it isn't rebuilt. Provenance is attested from this workflow run.
+        run: npm publish --provenance --access public --ignore-scripts

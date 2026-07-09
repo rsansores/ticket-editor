@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# Build-only wrapper that produces the browser wasm bundle — never published to
+# crates.io (consumers use the npm package, which embeds the built wasm).
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

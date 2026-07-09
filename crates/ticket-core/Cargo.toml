@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
+homepage = "https://rsansores.github.io/ticket-editor/"
+keywords = ["receipt", "thermal-printer", "ticket", "renderer", "escpos"]
+categories = ["rendering", "wasm"]
 
 [dependencies]
 serde = { workspace = true }
