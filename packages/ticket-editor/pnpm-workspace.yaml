@@ -1,5 +1,6 @@
-allowBuilds:
-  esbuild: set this to true or false
+# vite 8.1.4 is recent; allow it past pnpm's minimum-release-age supply-chain gate.
+minimumReleaseAgeExclude:
+  - vite@8.1.4
 # pnpm 11 settings for this package.
 # esbuild ships a native binary via a postinstall step; allow it to build.
 onlyBuiltDependencies:
