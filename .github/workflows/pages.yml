@@ -35,7 +35,7 @@ jobs:
           version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
       - uses: actions/configure-pages@v5
