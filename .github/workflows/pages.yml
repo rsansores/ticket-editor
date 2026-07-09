@@ -33,7 +33,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # --- Build the wasm renderer from Rust source ---------------------------
       # The browser preview must run the exact same code as the native backend.
@@ -58,7 +58,7 @@ jobs:
         run: ./scripts/build-wasm.sh
 
       # --- Build the demo SPA from that fresh wasm ----------------------------
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
       - uses: actions/setup-node@v4
@@ -66,7 +66,7 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       # --ignore-scripts: skip lifecycle scripts. esbuild resolves its platform
       # binary at runtime without a postinstall, and this avoids pnpm 11's
       # ignored-builds guard failing the install in CI.
@@ -74,7 +74,7 @@ jobs:
         working-directory: packages/ticket-editor
       - run: pnpm build:demo
         working-directory: packages/ticket-editor
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: packages/ticket-editor/dist-demo
 
@@ -86,4 +86,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
