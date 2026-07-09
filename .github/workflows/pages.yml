@@ -39,7 +39,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
       - uses: actions/configure-pages@v5
-      - run: pnpm install --frozen-lockfile
+      # --ignore-scripts: skip lifecycle scripts. esbuild resolves its platform
+      # binary at runtime without a postinstall, and this avoids pnpm 11's
+      # ignored-builds guard failing the install in CI.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       # The prebuilt wasm is committed under src/wasm, so no Rust toolchain is
       # needed here — the demo build just bundles it.
       - run: pnpm build:demo
