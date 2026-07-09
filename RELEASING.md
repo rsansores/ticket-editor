@@ -44,7 +44,7 @@ cargo publish -p ticket-core
 cd packages/ticket-editor
 npm login                         # your npm account (2FA)
 pnpm build:wasm && pnpm build     # produces src/wasm + dist (with types)
-npm publish --provenance --access public
+npm publish --access public       # no --provenance here: it only works from CI (OIDC)
 ```
 
 > Tip: `cargo publish --dry-run -p ticket-core` and `pnpm pack` let you inspect
