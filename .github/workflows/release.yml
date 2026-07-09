@@ -57,6 +57,19 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
+      # The wasm bindings are generated (not committed), and type-check imports
+      # them — so build them before type-checking, against the current renderer.
+      - name: Resolve wasm-bindgen version
+        id: wb
+        run: |
+          v=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+      - name: Build wasm bindings
+        run: ./scripts/build-wasm.sh
       - name: Editor typecheck + lint
         working-directory: packages/ticket-editor
         run: |
