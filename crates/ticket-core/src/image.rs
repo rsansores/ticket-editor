@@ -26,7 +26,8 @@ pub fn decode_png_gray(data: &str) -> Result<(Vec<u8>, u32, u32), String> {
         .decode(b64.trim())
         .map_err(|e| format!("bad base64: {e}"))?;
 
-    let mut decoder = png::Decoder::new(bytes.as_slice());
+    // png 0.18's Decoder requires Read + Seek; a Cursor over the bytes provides both.
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     // Cap total decode memory so a small file with a huge IHDR (a decompression
     // bomb) can't force a giant allocation before any pixel is validated.
@@ -39,7 +40,11 @@ pub fn decode_png_gray(data: &str) -> Result<(Vec<u8>, u32, u32), String> {
             return Err(format!("image too large: {}x{}", info.width, info.height));
         }
     }
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    // png 0.18 returns Option here (None if the size would overflow usize).
+    let out_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "png: output buffer size unavailable".to_string())?;
+    let mut buf = vec![0u8; out_size];
     let info = reader.next_frame(&mut buf).map_err(|e| format!("png: {e}"))?;
     let (w, h) = (info.width, info.height);
     let px = &buf[..info.buffer_size()];
