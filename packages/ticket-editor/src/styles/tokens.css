@@ -1,0 +1,43 @@
+/*
+ * Theme contract.
+ *
+ * The editor never hard-codes colors. Every internal `--te-*` variable resolves
+ * to a host design token (the shadcn names gaspar_vue already defines via
+ * @quickedge/vue) and falls back to a neutral default when those tokens are
+ * absent. Result:
+ *   - Embedded in gaspar  -> inherits --color-primary etc.  -> looks native.
+ *   - Standalone / OSS    -> uses the fallbacks below.       -> looks fine.
+ * Zero dependency on @quickedge; the host needs no adapter.
+ */
+.te-root {
+  --te-bg: var(--color-background, #ffffff);
+  --te-fg: var(--color-foreground, #0b1220);
+  --te-card: var(--color-card, #ffffff);
+  --te-card-fg: var(--color-card-foreground, var(--te-fg));
+  --te-primary: var(--color-primary, #4f46e5);
+  --te-primary-fg: var(--color-primary-foreground, #ffffff);
+  --te-muted: var(--color-muted, #f1f5f9);
+  --te-muted-fg: var(--color-muted-foreground, #64748b);
+  --te-accent: var(--color-accent, #eef2ff);
+  --te-border: var(--color-border, #e2e8f0);
+  --te-input: var(--color-input, #e2e8f0);
+  --te-ring: var(--color-ring, var(--te-primary));
+  --te-radius: var(--radius, 0.5rem);
+
+  color: var(--te-fg);
+  background: var(--te-bg);
+  font-family: var(
+    --font-sans,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif
+  );
+  box-sizing: border-box;
+}
+.te-root *,
+.te-root *::before,
+.te-root *::after {
+  box-sizing: border-box;
+}

@@ -1,0 +1,19 @@
+[package]
+name = "ticket-core"
+description = "Deterministic monospace-grid ticket renderer. The single source of truth shared by the backend (native) and the browser preview (wasm)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ab_glyph = { workspace = true }
+png = { workspace = true }
+qrcodegen = { workspace = true }
+base64 = "0.22"
+
+[dev-dependencies]
+png = { workspace = true }
+base64 = "0.22"

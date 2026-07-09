@@ -1,0 +1,8 @@
+allowBuilds:
+  esbuild: set this to true or false
+# pnpm 11 settings for this package.
+# esbuild ships a native binary via a postinstall step; allow it to build.
+onlyBuiltDependencies:
+  - esbuild
+# Don't re-run `pnpm install` before every `pnpm run`/`pnpm exec`.
+verifyDepsBeforeRun: false
