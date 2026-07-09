@@ -68,7 +68,10 @@ export function randomizeSample<T>(data: T): T {
         const p2 = (n: number) => String(n).padStart(2, '0')
         return `2030-${p2(1 + rnd(12))}-${p2(1 + rnd(28))} ${p2(rnd(24))}:${p2(rnd(60))}:${p2(rnd(60))}`
       }
-      const words = ['Dog Food', 'Cat Toy', 'Fish Food', 'Bird Seed', 'Leash', 'A-100294', 'Cash']
+      // Domain-neutral placeholders of varied length (to exercise layout).
+      // Kept generic on purpose so reshuffle never injects a theme into a
+      // host app's preview — it only reshapes whatever data the host passes.
+      const words = ['Sample', 'Example item', 'Placeholder', 'Value', 'A longer sample value', 'X-100294', 'N/A']
       return words[rnd(words.length)]
     }
     if (typeof v === 'boolean') return Math.random() > 0.5
