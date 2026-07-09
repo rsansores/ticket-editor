@@ -58,7 +58,7 @@ jobs:
         run: ./scripts/build-wasm.sh
 
       # --- Build the demo SPA from that fresh wasm ----------------------------
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
       - uses: actions/setup-node@v4
