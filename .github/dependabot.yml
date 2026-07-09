@@ -2,17 +2,29 @@ version: 2
 updates:
   # Keeps the SHA-pinned GitHub Actions current (security patches) via PRs you
   # review — pinning to a SHA is safe, but this stops it from silently rotting.
+  # Grouped so related bumps arrive as one reviewable PR, not a flood.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
 
+  # Frontend toolchain moves in lockstep (vite/plugin-vue, typescript/vue-tsc),
+  # so group it — one PR per week you can test as a unit.
   - package-ecosystem: npm
     directory: /packages/ticket-editor
     schedule:
       interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
