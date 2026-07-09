@@ -3,4 +3,5 @@
 **/dist
 *.png
 !crates/ticket-core/assets/*
+!docs/*.png
 Cargo.lock

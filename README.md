@@ -3,6 +3,19 @@
 A monospace-grid **receipt / ticket editor** for thermal printers, with a live
 preview that is **byte-for-byte identical** to what prints.
 
+![The editor: a variable tree, the grid canvas, and a live 1:1 preview](docs/editor.png)
+
+Design on a grid — drag variables, static text, logos and QR codes; add loops
+and conditionals — and the panel on the right shows exactly what the printer will
+produce. Because the preview and the print come from the **same renderer**, it's
+not an approximation:
+
+<p>
+  <img src="docs/receipt.png" alt="A rendered receipt with looped line items, a conditional discount, and a large total" width="330">
+  &nbsp;&nbsp;
+  <img src="docs/media.png" alt="A rendered receipt with a logo image and a QR code" width="330">
+</p>
+
 There is one renderer, written in Rust, compiled twice:
 
 ```
@@ -168,6 +181,11 @@ no panics on hostile input).
   authored via a git-style lane and configured in the side drawer.
 - Non-destructive editing: free placement, insert/remove rows, overflow zone,
   overlap flags, "fit to width".
+
+Loops and conditionals are marked in a git-style lane next to the rows and
+configured in the drawer — no template language to learn:
+
+![Configuring a loop: the band lane on the left, its settings in the right drawer](docs/loops.png)
 
 ## Repository layout
 
