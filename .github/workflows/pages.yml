@@ -2,13 +2,20 @@ name: Deploy demo to GitHub Pages
 
 # The editor demo is 100% client-side (the renderer runs in the browser via
 # WebAssembly), so it deploys as static files — no server, no backend.
+#
+# CI builds the wasm renderer from the Rust source on every deploy, so the demo
+# always reflects the current ticket-core — you never have to remember to run
+# build-wasm.sh and commit the result.
 
 on:
   push:
     branches: [master]
-    # Only rebuild when something that affects the demo changes.
+    # Rebuild when anything that affects the rendered demo changes: the editor,
+    # the renderer crates, or the wasm build script.
     paths:
       - 'packages/ticket-editor/**'
+      - 'crates/**'
+      - 'scripts/build-wasm.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -25,11 +32,32 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/ticket-editor
     steps:
       - uses: actions/checkout@v4
+
+      # --- Build the wasm renderer from Rust source ---------------------------
+      # The browser preview must run the exact same code as the native backend.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Resolve wasm-bindgen version
+        id: wb
+        # The wasm-bindgen CLI must match the wasm-bindgen crate EXACTLY, so read
+        # the resolved crate version rather than pinning it in two places.
+        run: |
+          version=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' \
+            | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "wasm-bindgen crate resolved to $version"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+      - name: Build wasm (ticket-core -> src/wasm)
+        run: ./scripts/build-wasm.sh
+
+      # --- Build the demo SPA from that fresh wasm ----------------------------
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -43,9 +71,9 @@ jobs:
       # binary at runtime without a postinstall, and this avoids pnpm 11's
       # ignored-builds guard failing the install in CI.
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      # The prebuilt wasm is committed under src/wasm, so no Rust toolchain is
-      # needed here — the demo build just bundles it.
+        working-directory: packages/ticket-editor
       - run: pnpm build:demo
+        working-directory: packages/ticket-editor
       - uses: actions/upload-pages-artifact@v3
         with:
           path: packages/ticket-editor/dist-demo
