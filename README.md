@@ -208,22 +208,28 @@ cargo run -p ticket-core --example sample -- /tmp/sample.png   # basic receipt
 cargo run -p ticket-core --example flow   -- /tmp/flow.png     # loop + condition
 cargo run -p ticket-core --example media  -- /tmp/media.png    # logo + QR
 
-# Renderer (wasm): rebuild the browser bundle after changing ticket-core
+# Renderer (wasm): the browser bundle is a GENERATED artifact, not committed to
+# git — build it once before running the editor, and again after changing ticket-core:
 ./scripts/build-wasm.sh    # needs `rustup target add wasm32-unknown-unknown`
                            # and `cargo install wasm-bindgen-cli --version <matches wasm-bindgen>`
 
 # Editor (standalone demo with hot reload)
-cd packages/ticket-editor && npm install && npm run dev   # http://localhost:5199
+cd packages/ticket-editor
+npm install
+npm run build:wasm    # first-time bootstrap (needs the Rust toolchain above)
+npm run dev           # http://localhost:5199
 
 # Lint / typecheck
 cargo clippy --all-targets            # (crate denies clippy::all)
 cd packages/ticket-editor && npm run lint && npm run type-check
 ```
 
-The wasm bundle embeds a snapshot of `ticket-core`; after changing the renderer,
-run `build-wasm.sh` so the preview matches the native output. When releasing,
-publish the crate and the npm package **from the same `ticket-core` version** so
-your backend (native) and the editor (wasm) render identically.
+The wasm bundle is built from `ticket-core` and is **not checked in** — it's a
+derived artifact. CI rebuilds it for the live demo, and `npm publish` bundles a
+fresh build automatically (the package's `prepack` script runs `build:wasm`), so
+a published release can never ship a stale renderer. When releasing, publish the
+crate and the npm package **from the same `ticket-core` version** so your backend
+(native) and the editor (wasm) render identically.
 
 ## License
 

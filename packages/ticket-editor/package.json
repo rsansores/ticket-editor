@@ -25,6 +25,7 @@
     "build": "vue-tsc -b && vite build",
     "build:demo": "BUILD_DEMO=1 vite build",
     "build:wasm": "../../scripts/build-wasm.sh",
+    "prepack": "pnpm run build:wasm && pnpm run build",
     "type-check": "vue-tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,vue}\" \"demo/**/*.{ts,vue}\""
   },

@@ -6,3 +6,7 @@
 !crates/ticket-core/assets/*
 !docs/*.png
 Cargo.lock
+# Generated wasm renderer — built from crates/ticket-wasm by scripts/build-wasm.sh.
+# Not versioned: it's a derived artifact. CI builds it for the demo, and
+# `npm publish` bundles a fresh build via the package's prepack script.
+packages/ticket-editor/src/wasm/
