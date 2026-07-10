@@ -25,7 +25,10 @@ fn renders_valid_png() {
     let doc = sample_doc();
     let png = render_png(&doc, &serde_json::Value::Null).unwrap();
     // PNG magic number.
-    assert_eq!(&png[0..8], &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+    assert_eq!(
+        &png[0..8],
+        &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]
+    );
     assert!(png.len() > 100, "png suspiciously small");
 }
 
@@ -34,17 +37,16 @@ fn is_deterministic() {
     let doc = sample_doc();
     let a = render_png(&doc, &serde_json::Value::Null).unwrap();
     let b = render_png(&doc, &serde_json::Value::Null).unwrap();
-    assert_eq!(a, b, "same input must yield identical bytes (parity depends on this)");
+    assert_eq!(
+        a, b,
+        "same input must yield identical bytes (parity depends on this)"
+    );
 }
 
 #[test]
 fn real_data_beats_fake() {
     let doc = sample_doc();
-    let with_data = render_png(
-        &doc,
-        &json!({ "sale": { "total_amount": 100.23 } }),
-    )
-    .unwrap();
+    let with_data = render_png(&doc, &json!({ "sale": { "total_amount": 100.23 } })).unwrap();
     let with_fake = render_png(&doc, &serde_json::Value::Null).unwrap();
     // The amount slot differs, so the rasters must differ.
     assert_ne!(with_data, with_fake);
@@ -86,7 +88,10 @@ fn wrap_flows_onto_multiple_lines() {
     let wrapped = render_png(&doc(true), &data).unwrap();
     let clipped = render_png(&doc(false), &data).unwrap();
     assert_ne!(wrapped, clipped);
-    assert!(wrapped.len() > clipped.len(), "wrapped should occupy more rows");
+    assert!(
+        wrapped.len() > clipped.len(),
+        "wrapped should occupy more rows"
+    );
 }
 
 #[test]
@@ -119,7 +124,11 @@ fn number_and_date_formatting_apply() {
         ]
     }))
     .unwrap();
-    let formatted = render_png(&doc, &json!({ "amt": 1234567.899, "when": "2030-01-02 03:04:05" })).unwrap();
+    let formatted = render_png(
+        &doc,
+        &json!({ "amt": 1234567.899, "when": "2030-01-02 03:04:05" }),
+    )
+    .unwrap();
     let raw = render_png(&doc, &json!({ "amt": "x", "when": "x" })).unwrap();
     // Formatted numbers/dates differ from the raw fallback rendering.
     assert_ne!(formatted, raw);
@@ -162,7 +171,10 @@ fn loop_repeats_and_flows_content_below() {
     let two = render_png(&doc, &data(2)).unwrap();
     let five = render_png(&doc, &data(5)).unwrap();
     assert_ne!(two, five);
-    assert!(five.len() > two.len(), "more loop items should make a taller ticket");
+    assert!(
+        five.len() > two.len(),
+        "more loop items should make a taller ticket"
+    );
 }
 
 #[test]
@@ -179,11 +191,22 @@ fn loop_absolute_path_gets_index_substituted() {
         ]
     }))
     .unwrap();
-    let distinct = render_png(&doc, &json!({ "cart": [{ "name": "AAA" }, { "name": "BBB" }] })).unwrap();
-    let same = render_png(&doc, &json!({ "cart": [{ "name": "AAA" }, { "name": "AAA" }] })).unwrap();
+    let distinct = render_png(
+        &doc,
+        &json!({ "cart": [{ "name": "AAA" }, { "name": "BBB" }] }),
+    )
+    .unwrap();
+    let same = render_png(
+        &doc,
+        &json!({ "cart": [{ "name": "AAA" }, { "name": "AAA" }] }),
+    )
+    .unwrap();
     // If index substitution works, distinct items render differently than two
     // identical items; if it were pinned to index 0, both would show "AAA","AAA".
-    assert_ne!(distinct, same, "each loop row must show its own item via index substitution");
+    assert_ne!(
+        distinct, same,
+        "each loop row must show its own item via index substitution"
+    );
 }
 
 #[test]
@@ -200,7 +223,10 @@ fn conditional_region_collapses_when_false() {
     .unwrap();
     let shown = render_png(&doc, &json!({ "discount": 10 })).unwrap();
     let hidden = render_png(&doc, &json!({ "discount": 0 })).unwrap();
-    assert_ne!(shown, hidden, "collapsing the discount band must change the render");
+    assert_ne!(
+        shown, hidden,
+        "collapsing the discount band must change the render"
+    );
     assert!(shown.len() > hidden.len(), "hidden band => shorter ticket");
 }
 
@@ -234,6 +260,98 @@ fn qr_from_variable_resolves() {
 }
 
 #[test]
+fn qr_from_calculated_variable_matches_the_literal_url() {
+    // A calculated variable joins a base URL with lat/lng; a QR bound to it must
+    // render byte-for-byte identically to the same URL typed as a literal QR.
+    // This is the whole point of computed values: author once, resolve by path.
+    let data = json!({ "ru": { "lat": "19.4326", "lng": "-99.1332" } });
+    let literal_url = "https://maps.google.com/?q=19.4326,-99.1332";
+
+    let computed_doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "computed": [{
+            "name": "maps_url",
+            "formula": "concat(\"https://maps.google.com/?q=\", ru.lat, \",\", ru.lng)"
+        }],
+        "elements": [{ "id": "q", "row": 0, "col": 0, "type": "qr",
+                       "value": "calc.maps_url", "from_variable": true, "size": 12 }]
+    }))
+    .unwrap();
+    let literal_doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "q", "row": 0, "col": 0, "type": "qr",
+                       "value": literal_url, "from_variable": false, "size": 12 }]
+    }))
+    .unwrap();
+
+    let from_calc = render_png(&computed_doc, &data).unwrap();
+    let from_literal = render_png(&literal_doc, &serde_json::Value::Null).unwrap();
+    assert_eq!(
+        from_calc, from_literal,
+        "a QR bound to calc.maps_url must equal the same URL as a literal QR"
+    );
+}
+
+#[test]
+fn computed_arithmetic_feeds_a_variable_element() {
+    // total = subtotal + tax, shown through a Variable element with formatting.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "computed": [{ "name": "total", "formula": "subtotal + tax" }],
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "variable", "path": "calc.total",
+                       "length": 12, "align": "right",
+                       "number": { "decimals": 2, "rounding": "half_up", "thousands": true } }]
+    }))
+    .unwrap();
+    // 100 + 16 = 116 renders differently than 100 + 4 = 104.
+    let a = render_png(&doc, &json!({ "subtotal": 100, "tax": 16 })).unwrap();
+    let b = render_png(&doc, &json!({ "subtotal": 100, "tax": 4 })).unwrap();
+    assert_ne!(a, b, "the computed total must reflect its operands");
+    assert_eq!(&a[0..4], &[0x89, b'P', b'N', b'G']);
+}
+
+#[test]
+fn computed_conditional_aggregate_totals_by_category() {
+    // A POS "cut": cash_total = sumif over movements where payment == "CASH".
+    // The footer shows it as a Variable element referencing calc.cash_total.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 32 },
+        "computed": [
+            { "name": "cash_total", "formula": "sumif(sale.movements, payment == \"CASH\", qty)" },
+            { "name": "sales_line", "formula": "concat(count(sale.movements), \" movements\")" }
+        ],
+        "elements": [
+            { "id": "c", "row": 0, "col": 0, "type": "variable", "path": "calc.cash_total",
+              "length": 12, "align": "right",
+              "number": { "decimals": 2, "rounding": "half_up", "thousands": true } },
+            { "id": "n", "row": 1, "col": 0, "type": "variable", "path": "calc.sales_line", "length": 20 }
+        ]
+    }))
+    .unwrap();
+    let data = json!({ "sale": { "movements": [
+        { "payment": "CASH", "qty": 10 },
+        { "payment": "CARD", "qty": 99 },
+        { "payment": "CASH", "qty": 5 }
+    ]}});
+    // Changing a CARD row must NOT change cash_total; changing a CASH row must.
+    let base = render_png(&doc, &data).unwrap();
+    let card_changed = render_png(&doc, &json!({ "sale": { "movements": [
+        { "payment": "CASH", "qty": 10 }, { "payment": "CARD", "qty": 1 }, { "payment": "CASH", "qty": 5 }
+    ]}})).unwrap();
+    let cash_changed = render_png(&doc, &json!({ "sale": { "movements": [
+        { "payment": "CASH", "qty": 10 }, { "payment": "CARD", "qty": 99 }, { "payment": "CASH", "qty": 7 }
+    ]}})).unwrap();
+    assert_eq!(
+        base, card_changed,
+        "a CARD movement must not affect the cash total"
+    );
+    assert_ne!(
+        base, cash_changed,
+        "a CASH movement must affect the cash total"
+    );
+}
+
+#[test]
 fn adversarial_inputs_do_not_panic() {
     // Absurd decimals must clamp, not overflow/divide-by-zero.
     let doc: TicketDoc = serde_json::from_value(json!({
@@ -250,20 +368,29 @@ fn adversarial_inputs_do_not_panic() {
         "elements": [{ "id": "i", "row": 0, "col": 0, "type": "image", "data": "x", "w": 100000, "h": 100000 }]
     }))
     .unwrap();
-    assert!(matches!(render_png(&big_img, &serde_json::Value::Null), Err(RenderError::TooLarge { .. })));
+    assert!(matches!(
+        render_png(&big_img, &serde_json::Value::Null),
+        Err(RenderError::TooLarge { .. })
+    ));
 
     let big_qr: TicketDoc = serde_json::from_value(json!({
         "version": 1, "paper": { "width_chars": 30 },
         "elements": [{ "id": "q", "row": 0, "col": 0, "type": "qr", "value": "hi", "size": 100000 }]
     }))
     .unwrap();
-    assert!(matches!(render_png(&big_qr, &serde_json::Value::Null), Err(RenderError::TooLarge { .. })));
+    assert!(matches!(
+        render_png(&big_qr, &serde_json::Value::Null),
+        Err(RenderError::TooLarge { .. })
+    ));
 
     let huge_paper: TicketDoc = serde_json::from_value(json!({
         "version": 1, "paper": { "width_chars": 4000000000u32 }
     }))
     .unwrap();
-    assert!(matches!(render_png(&huge_paper, &serde_json::Value::Null), Err(RenderError::TooLarge { .. })));
+    assert!(matches!(
+        render_png(&huge_paper, &serde_json::Value::Null),
+        Err(RenderError::TooLarge { .. })
+    ));
 }
 
 #[test]

@@ -13,7 +13,7 @@
 
 use serde_json::Value;
 
-use crate::schema::{CondOp, Condition};
+use crate::schema::{Computed, CondOp, Condition};
 
 /// A loop context: the array path being looped, the current index, and the item.
 pub type LoopCtx<'a> = Option<(&'a str, usize, &'a Value)>;
@@ -53,11 +53,7 @@ pub fn eval_condition(loop_ctx: LoopCtx, root: &Value, cond: &Condition) -> bool
         CondOp::Eq | CondOp::Ne | CondOp::Gt | CondOp::Lt | CondOp::Gte | CondOp::Lte => {
             let lhs = found.map(value_to_string).unwrap_or_default();
             let rhs = cond.value.clone();
-            // Numeric compare when both parse; else lexicographic for eq/ne.
-            let ord = match (lhs.trim().parse::<f64>(), rhs.trim().parse::<f64>()) {
-                (Ok(a), Ok(b)) => a.partial_cmp(&b),
-                _ => Some(lhs.cmp(&rhs)),
-            };
+            let ord = compare_strs(&lhs, &rhs);
             match (cond.op, ord) {
                 (CondOp::Eq, Some(o)) => o == std::cmp::Ordering::Equal,
                 (CondOp::Ne, Some(o)) => o != std::cmp::Ordering::Equal,
@@ -71,7 +67,17 @@ pub fn eval_condition(loop_ctx: LoopCtx, root: &Value, cond: &Condition) -> bool
     }
 }
 
-fn is_empty_value(v: &Value) -> bool {
+/// Order two display strings: numerically when both parse as numbers, else
+/// lexicographically. The single source of truth for both `eval_condition` and
+/// the formula engine's comparisons, so `x > y` means the same in each.
+pub(crate) fn compare_strs(lhs: &str, rhs: &str) -> Option<std::cmp::Ordering> {
+    match (lhs.trim().parse::<f64>(), rhs.trim().parse::<f64>()) {
+        (Ok(a), Ok(b)) => a.partial_cmp(&b),
+        _ => Some(lhs.cmp(rhs)),
+    }
+}
+
+pub(crate) fn is_empty_value(v: &Value) -> bool {
     match v {
         Value::Null => true,
         Value::String(s) => s.is_empty(),
@@ -104,6 +110,132 @@ pub fn value_to_string(v: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Null => String::new(),
         other => other.to_string(),
+    }
+}
+
+/// Adversarial-input cap: at most this many computed variables per document.
+const MAX_COMPUTED: usize = 256;
+
+/// Return a clone of the variable data `root` with every calculated variable
+/// merged in under the `calc` key — the working data the renderer resolves
+/// against. Call once per render when `computed` is non-empty; after this a
+/// `calc.<name>` path resolves like any other data with no special-casing.
+pub fn with_computed(root: &Value, computed: &[Computed]) -> Value {
+    let calc = eval_computed(root, computed);
+    overlay_calc(root, calc)
+}
+
+/// Evaluate every calculated variable in declaration order, returning the object
+/// exposed as `calc`. Later entries may reference earlier ones (`calc.<name>`);
+/// a reference to a name not yet defined resolves to null, so cycles are
+/// impossible by construction (references only ever point backwards). A formula
+/// that fails to parse or evaluate resolves to null (renders blank); the editor
+/// surfaces the actual error separately via [`eval_computed_report`].
+pub fn eval_computed(root: &Value, computed: &[Computed]) -> Value {
+    let mut calc = serde_json::Map::new();
+    for r in eval_all(root, computed) {
+        calc.insert(r.name, r.value);
+    }
+    Value::Object(calc)
+}
+
+/// One computed variable's result plus any parse/evaluation error — what the
+/// editor needs to show a live value and a red error line as the user types.
+pub struct ComputedReport {
+    /// The variable's name.
+    pub name: String,
+    /// The evaluated value (null when it errored).
+    pub value: Value,
+    /// A human-readable error, if the formula didn't parse/evaluate.
+    pub error: Option<String>,
+}
+
+/// Like [`eval_computed`], but reports each formula's error instead of swallowing
+/// it. Used by the editor's live preview (via the wasm `preview_computed` shim).
+pub fn eval_computed_report(root: &Value, computed: &[Computed]) -> Vec<ComputedReport> {
+    eval_all(root, computed)
+}
+
+/// Evaluate every calculated variable in declaration order. The data root is
+/// cloned ONCE into a working object whose `calc` slot is refreshed per variable
+/// (rather than re-cloning the whole root each iteration). Later entries may
+/// reference earlier ones via `calc.<name>`; a reference to a name not yet
+/// defined resolves to null, so cycles are impossible (references point backward).
+fn eval_all(root: &Value, computed: &[Computed]) -> Vec<ComputedReport> {
+    let mut working = overlay_calc(root, Value::Object(serde_json::Map::new()));
+    let mut calc = serde_json::Map::new();
+    let mut out = Vec::new();
+    for c in computed.iter().take(MAX_COMPUTED) {
+        // Expose the values computed so far so this formula can build on them.
+        if let Value::Object(m) = &mut working {
+            m.insert("calc".to_string(), Value::Object(calc.clone()));
+        }
+        let (value, error) = match crate::expr::eval_formula(&c.formula, &working, None) {
+            Ok(v) => (v, None),
+            Err(e) => (Value::Null, Some(e)),
+        };
+        calc.insert(c.name.clone(), value.clone());
+        out.push(ComputedReport {
+            name: c.name.clone(),
+            value,
+            error,
+        });
+    }
+    out
+}
+
+/// The editor-facing "kind" of a value: drives the default formatting when a
+/// calculated variable is placed on the ticket (numbers get number formatting).
+pub fn kind_of(v: &Value) -> &'static str {
+    match v {
+        Value::Number(_) => "number",
+        Value::Null => "empty",
+        _ => "text",
+    }
+}
+
+/// Clone the data root and set its top-level `calc` key to the given object.
+fn overlay_calc(root: &Value, calc: Value) -> Value {
+    let mut obj = match root {
+        Value::Object(m) => m.clone(),
+        _ => serde_json::Map::new(),
+    };
+    obj.insert("calc".to_string(), calc);
+    Value::Object(obj)
+}
+
+/// Coerce a value to f64 the same way `eval_condition` compares numerically, so
+/// computes and comparisons agree. Non-numeric → None.
+pub(crate) fn to_number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
+/// Convert a computed f64 back to a JSON number, preferring an integer when the
+/// value is whole (so `100 + 16` prints `116`, not `116.0`). Non-finite → null.
+pub(crate) fn number_value(x: f64) -> Value {
+    if !x.is_finite() {
+        return Value::Null;
+    }
+    // Kill floating-point noise from chained arithmetic — e.g. `46.24 - 4.62`
+    // comes out as 41.620000000000005 — by rounding to 10 decimal places. Values
+    // that legitimately need more precision than that are vanishingly rare on a
+    // ticket, and parity holds because the same rounding runs native and in wasm.
+    let x = if x.abs() < 1e10 {
+        (x * 1e10).round() / 1e10
+    } else {
+        x
+    };
+    if x.fract() == 0.0 && x.abs() < 1e15 {
+        Value::Number((x as i64).into())
+    } else {
+        serde_json::Number::from_f64(x)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
     }
 }
 
@@ -140,4 +272,54 @@ fn stable_hash(s: &str) -> u64 {
         h = h.wrapping_mul(0x100000001b3);
     }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn c(name: &str, formula: &str) -> Computed {
+        Computed {
+            name: name.into(),
+            formula: formula.into(),
+        }
+    }
+
+    #[test]
+    fn computed_evaluate_in_order_under_calc_namespace() {
+        let data = json!({ "sale": { "subtotal": 100, "tax": 16 } });
+        let computed = vec![
+            c("total", "sale.subtotal + sale.tax"),
+            // References the earlier `calc.total`.
+            c("label", r#"concat("Total: ", calc.total)"#),
+        ];
+        assert_eq!(
+            eval_computed(&data, &computed),
+            json!({ "total": 116, "label": "Total: 116" })
+        );
+        // `with_computed` exposes them so a plain `calc.total` path resolves.
+        let merged = with_computed(&data, &computed);
+        assert_eq!(resolve(&merged, "calc.total"), Some(&json!(116)));
+    }
+
+    #[test]
+    fn forward_reference_to_a_later_calc_is_null() {
+        // `a` points at `calc.b`, defined later — resolves to null, no cycle, no fake.
+        let computed = vec![c("a", "calc.b"), c("b", "1")];
+        assert_eq!(
+            eval_computed(&Value::Null, &computed),
+            json!({ "a": null, "b": 1 })
+        );
+    }
+
+    #[test]
+    fn report_surfaces_parse_errors() {
+        let rep = eval_computed_report(&Value::Null, &[c("bad", "1 +")]);
+        assert!(
+            rep[0].error.is_some(),
+            "a broken formula must report an error"
+        );
+        assert_eq!(rep[0].value, Value::Null);
+    }
 }

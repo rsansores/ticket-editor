@@ -48,7 +48,9 @@ fn main() {
     .unwrap();
 
     let data = json!({ "sale": { "receipt_url": "https://example.com/r/A-100294" } });
-    let out = std::env::args().nth(1).unwrap_or_else(|| "media.png".into());
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "media.png".into());
     std::fs::write(&out, render_png(&doc, &data).unwrap()).unwrap();
     // Dump the exact doc+data so the native/wasm parity check feeds identical input.
     std::fs::write(

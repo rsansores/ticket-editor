@@ -193,11 +193,55 @@ configured in the drawer — no template language to learn:
 ## Repository layout
 
 ```
-crates/ticket-core     # the renderer + schema (native + wasm), the crates.io package
-crates/ticket-wasm     # wasm-bindgen wrapper (build tool; produces the browser bundle)
-packages/ticket-editor # the Vue editor (@ticket-editor/vue), embeds the wasm
-scripts/build-wasm.sh  # rebuild the browser wasm bundle from ticket-core
+crates/ticket-core            # the renderer + schema (native + wasm), the crates.io package
+crates/ticket-wasm            # wasm-bindgen wrapper (build tool; produces the browser bundle)
+crates/ticket-printable       # derive an annotated model into the variables JSON (DB/framework-agnostic)
+crates/ticket-printable-derive# the #[derive(Printable)] proc-macro
+packages/ticket-editor        # the Vue editor (@ticket-editor/vue), embeds the wasm
+scripts/build-wasm.sh         # rebuild the browser wasm bundle from ticket-core
 ```
+
+## Feeding the variable tree from your models — `ticket-printable`
+
+Instead of hand-writing the `variables` object (and a matching sample that
+drifts), annotate your existing model structs and derive `Printable`. One
+definition yields both the editor's sample tree and the real render data, so
+they can't diverge. See [`crates/ticket-printable`](crates/ticket-printable) —
+it's DB- and framework-agnostic (annotate a struct, get JSON).
+
+## Calculated variables (e.g. a maps QR, per-payment totals)
+
+Derived values are authored in the editor, not the backend. In the **Calculated**
+panel you give a value a name and a small **formula** over your existing
+variables. It appears under the `calc.` namespace and behaves like any other
+variable from then on: use it as a field, in a QR (**From a variable →
+`calc.<name>`**), or in a condition. The editor's formula box has an **Insert
+variable** and **Insert function** picker (so you never memorise names or
+syntax), a self-documenting function list, and a live preview + error line
+evaluated by the same engine that prints — so preview == print by construction.
+
+The formula language is spreadsheet-like:
+
+- dotted variable paths (`sale.total`, `calc.subtotal`), `"text"` and number
+  literals, `+ - * / %` with parentheses, comparisons (`== != < <= > >=`) and
+  `and` / `or`;
+- functions: `concat`, `round`, `min`, `max`, `abs`, `coalesce`;
+- **aggregates over a loop array**: `count`, `countif`, `sum`, `sumif`, `avg`,
+  `avgif` — bare field names inside them refer to the current row.
+
+```text
+maps_link  = concat("https://maps.google.com/?q=", store.lat, ",", store.lng)
+cash_total = sumif(sale.movements, payment == "CASH", amount)
+sales_line = concat(count(sale.movements), " payments in the cut")
+```
+
+That last group is how a POS "cut" ticket shows per-payment totals after a loop —
+declaratively, with no accumulators. The document stores each as
+`{ name, formula }` under `computed` (see `TicketDoc`). Parsing and evaluation
+live in `ticket-core` with strict bounds and no panics; a formula that fails to
+parse renders blank (and the editor shows why), arithmetic falls back to blank on
+a missing/non-numeric operand or divide-by-zero (never NaN), and results are
+cleaned of floating-point noise.
 
 ## Develop
 

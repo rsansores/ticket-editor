@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current schema version. Bump when the shape changes so persisted documents
 /// can be migrated deterministically.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// A complete ticket layout.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +35,35 @@ pub struct TicketDoc {
     /// contains them. See `render` for the flow transform.
     #[serde(default)]
     pub regions: Vec<Region>,
+    /// Calculated variables: named values derived from other variables (join,
+    /// arithmetic, …). Evaluated once before rendering and exposed under the
+    /// reserved `calc.` namespace, so a QR / variable / condition references them
+    /// by path exactly like host-supplied data. Empty for documents that use none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub computed: Vec<Computed>,
+}
+
+/// A calculated (computed) variable: a named value derived from other variables
+/// by a small formula.
+///
+/// Evaluated once per render, before any element is resolved, and injected into
+/// the working data under `calc.<name>`. Everything downstream — a `Variable`
+/// element, a `Qr` with `from_variable`, a `Condition`, a loop binding — then
+/// resolves it by path with zero special-casing. Because evaluation lives here in
+/// `ticket-core`, the wasm preview and the native print agree by construction.
+///
+/// The `formula` is a small spreadsheet-like expression (see the `expr` module):
+/// dotted variable paths, `"text"`/number literals, `+ - * / %`, comparisons and
+/// `and`/`or`, and functions incl. aggregates over loop arrays
+/// (`sumif(sale.movements, payment == "CASH", qty)`, `count(sale.sales)`). It is
+/// parsed and evaluated with strict bounds and no panics, so a hostile document
+/// can't misbehave; a formula that fails to parse resolves to blank.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Computed {
+    /// Unique name; the value is exposed at path `calc.<name>`.
+    pub name: String,
+    /// The formula evaluated to produce the value.
+    pub formula: String,
 }
 
 /// A row-band `[start_row, end_row)` (content rows) that changes how the rows it

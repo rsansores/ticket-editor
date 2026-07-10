@@ -97,6 +97,16 @@ struct RasterBlock {
 /// Render a document to PNG bytes.
 pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderError> {
     let fonts = FontSet::load().map_err(|e| RenderError::Font(e.to_string()))?;
+    // Evaluate calculated variables once and expose them under `calc.*`, so every
+    // downstream resolver (variables, QR-from-variable, conditions, loops) treats
+    // them like ordinary data. Skipped entirely when the document has none.
+    let merged;
+    let variables = if doc.computed.is_empty() {
+        variables
+    } else {
+        merged = data::with_computed(variables, &doc.computed);
+        &merged
+    };
     let (placements, blocks, total_rows) = lay_out(doc, variables)?;
     rasterize(doc, &placements, &blocks, total_rows, &fonts)
 }
@@ -159,7 +169,12 @@ fn lay_out(
             } else {
                 (i64::from(count) - 1) * i64::from(height)
             };
-            RegionPlan { region, height, count, delta_after }
+            RegionPlan {
+                region,
+                height,
+                count,
+                delta_after,
+            }
         })
         .collect();
 
@@ -197,7 +212,10 @@ fn lay_out(
                     let w_px64 = u64::from((*w).max(1)) * cell_w64;
                     let h_px64 = u64::from((*h).max(1)) * cell_h64;
                     if w_px64 > MAX_PIXELS || h_px64 > MAX_PIXELS || w_px64 * h_px64 > MAX_PIXELS {
-                        return Err(RenderError::TooLarge { width: w_px64, height: h_px64 });
+                        return Err(RenderError::TooLarge {
+                            width: w_px64,
+                            height: h_px64,
+                        });
                     }
                     let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
                     let mask = match image::decode_png_gray(data) {
@@ -217,8 +235,14 @@ fn lay_out(
                     });
                     max_bottom = max_bottom.max(base_row + i64::from(*h));
                 }
-                ElementKind::Qr { value, from_variable, size } => {
+                ElementKind::Qr {
+                    value,
+                    from_variable,
+                    size,
+                } => {
                     let text = if *from_variable {
+                        // The path may point at a calculated variable (`calc.*`),
+                        // e.g. a maps URL built from lat/lng — resolved like any other.
                         match data::resolve_loop(loop_ctx, variables, value) {
                             Some(v) => data::value_to_string(v),
                             None => data::fake_for(value),
@@ -228,13 +252,15 @@ fn lay_out(
                     };
                     let side64 = u64::from((*size).max(1)) * cell_w64; // square (scannable)
                     if side64 > MAX_PIXELS || side64 * side64 > MAX_PIXELS {
-                        return Err(RenderError::TooLarge { width: side64, height: side64 });
+                        return Err(RenderError::TooLarge {
+                            width: side64,
+                            height: side64,
+                        });
                     }
                     let side = side64 as u32;
                     let rows = side.div_ceil(cell_h);
                     // A value too long to encode falls back to a visible placeholder.
-                    let mask =
-                        qr_mask(&text, side).unwrap_or_else(|| placeholder_mask(side, side));
+                    let mask = qr_mask(&text, side).unwrap_or_else(|| placeholder_mask(side, side));
                     blocks.push(RasterBlock {
                         x: i64::from(ml + el.col) * i64::from(cell_w),
                         y: base_row * i64::from(cell_h) + y_off_px as i64,
@@ -297,10 +323,18 @@ fn lay_out(
                 if plan.count == 0 {
                     continue;
                 }
-                emit(el, None, mt as i64 + i64::from(el.row) + offset_before(el.row))?;
+                emit(
+                    el,
+                    None,
+                    mt as i64 + i64::from(el.row) + offset_before(el.row),
+                )?;
             }
             None => {
-                emit(el, None, mt as i64 + i64::from(el.row) + offset_before(el.row))?;
+                emit(
+                    el,
+                    None,
+                    mt as i64 + i64::from(el.row) + offset_before(el.row),
+                )?;
             }
         }
     }
@@ -315,10 +349,16 @@ fn lay_out(
     // Final canvas bound in u64 — no u32 overflow before the check.
     let width64 = u64::from(paper.width_chars.max(1)) * cell_w64;
     let height64 = total_rows_i as u64 * cell_h64;
-    if width64 == 0 || height64 == 0 || width64 > MAX_PIXELS || height64 > MAX_PIXELS
+    if width64 == 0
+        || height64 == 0
+        || width64 > MAX_PIXELS
+        || height64 > MAX_PIXELS
         || width64 * height64 > MAX_PIXELS
     {
-        return Err(RenderError::TooLarge { width: width64, height: height64 });
+        return Err(RenderError::TooLarge {
+            width: width64,
+            height: height64,
+        });
     }
 
     Ok((placements, blocks, total_rows_i as u32))
@@ -365,6 +405,8 @@ fn placeholder_mask(w: u32, h: u32) -> Vec<bool> {
 /// loop context / faker, then number or date formatting).
 fn resolve_display(el: &Element, loop_ctx: data::LoopCtx, root: &Value) -> String {
     match &el.kind {
+        // Static text renders verbatim. A value derived from other variables is
+        // authored as a calculated variable and placed as a `Variable` element.
         ElementKind::Text { content } => content.clone(),
         ElementKind::Variable {
             path,
@@ -456,7 +498,11 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
             }
             continue;
         }
-        let needed = if cur_len == 0 { wlen } else { cur_len + 1 + wlen };
+        let needed = if cur_len == 0 {
+            wlen
+        } else {
+            cur_len + 1 + wlen
+        };
         if needed > width {
             lines.push(std::mem::take(&mut cur));
             cur = word.to_string();
@@ -521,7 +567,10 @@ fn rasterize(
     let width64 = u64::from(cols) * u64::from(cell_w);
     let height64 = u64::from(total_rows.max(1)) * u64::from(cell_h);
     if width64 == 0 || height64 == 0 || width64 * height64 > MAX_PIXELS {
-        return Err(RenderError::TooLarge { width: width64, height: height64 });
+        return Err(RenderError::TooLarge {
+            width: width64,
+            height: height64,
+        });
     }
     let width = width64 as u32;
     let height = height64 as u32;
@@ -537,7 +586,10 @@ fn rasterize(
 
     // Raster blocks (logos / QR) first, so glyphs can sit on top if they overlap.
     let paint = |buf: &mut [u8], px: i64, py: i64| {
-        if px < clip_x0 as i64 || px >= clip_x1 as i64 || py < clip_y0 as i64 || py >= clip_y1 as i64
+        if px < clip_x0 as i64
+            || px >= clip_x1 as i64
+            || py < clip_y0 as i64
+            || py >= clip_y1 as i64
         {
             return;
         }

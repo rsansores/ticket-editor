@@ -33,7 +33,9 @@ fn main() {
     } });
     let png = render_png(&doc, &data).unwrap();
 
-    let out = std::env::args().nth(1).unwrap_or_else(|| "sample.png".into());
+    let out = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "sample.png".into());
     std::fs::write(&out, &png).unwrap();
     eprintln!("wrote {} ({} bytes)", out, png.len());
 }

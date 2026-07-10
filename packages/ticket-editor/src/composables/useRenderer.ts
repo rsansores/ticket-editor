@@ -1,10 +1,10 @@
 // Bridge to the wasm renderer — the SAME `ticket-core` code the backend runs.
 // Whatever this draws is byte-for-byte what the printer will produce.
 
-import init, { render_png, schema_version } from '../wasm/ticket_wasm.js'
+import init, { render_png, schema_version, preview_computed } from '../wasm/ticket_wasm.js'
 // Vite resolves this to a URL; the .wasm ships as an asset.
 import wasmUrl from '../wasm/ticket_wasm_bg.wasm?url'
-import type { TicketDoc } from '../types'
+import type { Computed, ComputedResult, TicketDoc } from '../types'
 
 let ready: Promise<void> | null = null
 
@@ -56,4 +56,20 @@ export async function renderToUrl(
 export async function rendererSchemaVersion(): Promise<number> {
   await ensureInit()
   return schema_version()
+}
+
+/**
+ * Evaluate calculated variables against sample data through the SAME engine the
+ * renderer uses — so the editor's live formula preview matches the printed
+ * result. Returns one result per input (in order), each with its value, kind and
+ * any parse/evaluation error.
+ * @throws only if the JSON boundary itself is malformed.
+ */
+export async function previewComputed(
+  computed: Computed[],
+  variables?: unknown,
+): Promise<ComputedResult[]> {
+  await ensureInit()
+  const varsJson = variables == null ? '' : JSON.stringify(variables)
+  return JSON.parse(preview_computed(JSON.stringify(computed), varsJson)) as ComputedResult[]
 }
