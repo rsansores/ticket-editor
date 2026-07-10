@@ -476,7 +476,8 @@ async function save() {
           <BandPanel v-if="selectedBand" :region="selectedBand" :loop-sources="loopSources"
             :all-vars="allVars" @update:region="updateRegion" @remove="removeRegion" />
           <ModifierPanel v-else :element="selected" :var-type="selectedType" :all-vars="allVars"
-            :content-cols="contentCols" @update:element="updateElement" @remove="removeElement" />
+            :loop-sources="loopSources" :content-cols="contentCols"
+            @update:element="updateElement" @remove="removeElement" />
         </div>
       </aside>
     </div>

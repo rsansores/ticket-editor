@@ -16,6 +16,8 @@ const props = defineProps<{
   varType?: VariableType
   /** All leaf variables, for the QR "from variable" picker. */
   allVars?: { path: string; key: string }[]
+  /** Repeatable list paths, so loop-relative fields aren't flagged unavailable. */
+  loopSources?: { path: string; key: string }[]
   /** Printable content width in characters, for the "Fit to width" action. */
   contentCols?: number
 }>()
@@ -48,11 +50,19 @@ const el = computed(() => props.element)
 // A reference to a variable that isn't in the current catalog (e.g. an imported
 // design). Surfaced so the user can remove the element or point it elsewhere.
 const knownPaths = computed(() => new Set((props.allVars ?? []).map((v) => v.path)))
+const loopPrefixes = computed(() => (props.loopSources ?? []).map((l) => `${l.path}.`))
+// A loop-relative field (`sale.items.0.qty`) is "known" whenever its list is —
+// even if the sample array is empty, so it isn't derivable from `allVars`.
+function pathKnown(path: string): boolean {
+  return knownPaths.value.has(path) || loopPrefixes.value.some((p) => path.startsWith(p))
+}
 const unavailable = computed(() => {
   const e = el.value
   if (!e) return false
-  if (e.type === 'variable') return !!e.path && !knownPaths.value.has(e.path)
-  if (e.type === 'qr' && e.from_variable) return !!e.value && !knownPaths.value.has(e.value)
+  if (e.type === 'variable') return !!e.path && !pathKnown(e.path)
+  if ((e.type === 'qr' || e.type === 'barcode') && e.from_variable)
+    return !!e.value && !pathKnown(e.value)
+  if (e.type === 'image' && e.from_variable) return !!e.data && !pathKnown(e.data)
   return false
 })
 
@@ -70,9 +80,17 @@ function patchStyle(p: Partial<NonNullable<Element['style']>>) {
 function fitWidth() {
   const e = el.value
   if (!e || e.type !== 'variable') return
-  const scale = e.style?.scale ?? 1
+  const scale = Math.max(1, e.style?.scale ?? 1) // guard a hand-authored scale of 0
   const len = Math.max(1, Math.floor(((props.contentCols ?? 1) - e.col) / scale))
   patch({ length: len })
+}
+// Toggle a QR/barcode between a literal and a variable source. Turning ON resets
+// the value to a real variable, so a leftover literal isn't left dangling (and
+// flagged UNAVAILABLE) with the picker showing nothing.
+function toggleFromVariable(on: boolean) {
+  if (!el.value) return
+  const value = on ? (props.allVars?.[0]?.path ?? '') : el.value.value
+  emit('update:element', { ...el.value, from_variable: on, value })
 }
 // Turn a static image back into a dynamic one (bytes from a variable). The
 // reverse — file upload — happens in onReplaceFile.
@@ -205,7 +223,7 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
       <template v-else-if="el.type === 'qr'">
         <label class="te-check">
           <input type="checkbox" :checked="el.from_variable"
-            @change="patch({ from_variable: ($event.target as HTMLInputElement).checked })" />
+            @change="toggleFromVariable(($event.target as HTMLInputElement).checked)" />
           <span>{{ t('fromVariable') }}</span>
         </label>
         <label v-if="el.from_variable" class="te-field">
@@ -231,7 +249,7 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
       <template v-else-if="el.type === 'barcode'">
         <label class="te-check">
           <input type="checkbox" :checked="el.from_variable"
-            @change="patch({ from_variable: ($event.target as HTMLInputElement).checked })" />
+            @change="toggleFromVariable(($event.target as HTMLInputElement).checked)" />
           <span>{{ t('fromVariable') }}</span>
         </label>
         <label v-if="el.from_variable" class="te-field">

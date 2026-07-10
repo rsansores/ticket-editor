@@ -196,14 +196,20 @@ function isOffPaper(el: Element): boolean {
 }
 // Paths that exist in the current variable catalog (host data + calc vars).
 const knownPaths = computed(() => new Set((props.allVars ?? []).map((v) => v.path)))
+const loopPrefixes = computed(() => (props.loopSources ?? []).map((l) => `${l.path}.`))
+// A loop-relative field (`sale.items.0.qty`) counts as known whenever its list
+// is — even when the sample array is empty, so it isn't in `allVars`.
+function pathKnown(path: string): boolean {
+  return knownPaths.value.has(path) || loopPrefixes.value.some((p) => path.startsWith(p))
+}
 // An element that references a variable NOT in the catalog — e.g. a design
 // imported into a system with different variables. Flagged so the user can
 // remove it or point it at a real variable.
 function isUnavailable(el: Element): boolean {
-  if (el.type === 'variable') return !!el.path && !knownPaths.value.has(el.path)
+  if (el.type === 'variable') return !!el.path && !pathKnown(el.path)
   if ((el.type === 'qr' || el.type === 'barcode') && el.from_variable)
-    return !!el.value && !knownPaths.value.has(el.value)
-  if (el.type === 'image' && el.from_variable) return !!el.data && !knownPaths.value.has(el.data)
+    return !!el.value && !pathKnown(el.value)
+  if (el.type === 'image' && el.from_variable) return !!el.data && !pathKnown(el.data)
   return false
 }
 function label(el: Element): string {
