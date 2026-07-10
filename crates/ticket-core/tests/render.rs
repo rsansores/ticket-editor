@@ -1,5 +1,5 @@
 use serde_json::json;
-use ticket_core::{render_png, RenderError, TicketDoc};
+use ticket_core::{render_png, render_png_with_fonts, FontFaces, Fonts, RenderError, TicketDoc};
 
 fn sample_doc() -> TicketDoc {
     serde_json::from_value(json!({
@@ -396,6 +396,69 @@ fn barcode_from_variable_resolves_and_invalid_falls_back() {
     assert_eq!(
         &render_png(&bad, &serde_json::Value::Null).unwrap()[0..4],
         &[0x89, b'P', b'N', b'G']
+    );
+}
+
+#[test]
+fn missing_font_is_a_hard_error() {
+    // A document referencing a font the renderer wasn't given must fail loudly,
+    // not silently substitute — so a backend render surfaces the misconfiguration.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HI",
+                       "style": { "font": "not-registered" } }]
+    }))
+    .unwrap();
+    assert!(matches!(
+        render_png(&doc, &serde_json::Value::Null),
+        Err(RenderError::MissingFont(f)) if f == "not-registered"
+    ));
+}
+
+#[test]
+fn registered_font_family_is_used_per_element_and_per_doc() {
+    // Register an "alt" family whose regular face is actually the bold outlines,
+    // so a field in "alt" renders differently from the built-in regular.
+    let bold = include_bytes!("../assets/DejaVuSansMono-Bold.ttf").to_vec();
+    let mut fonts = Fonts::builtin().unwrap();
+    fonts.add_family(
+        "alt",
+        FontFaces::from_bytes(bold.clone(), bold.clone(), bold.clone(), bold).unwrap(),
+    );
+
+    let doc = |style: serde_json::Value, doc_font: Option<&str>| -> TicketDoc {
+        let mut v = json!({
+            "version": 2, "paper": { "width_chars": 20 },
+            "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HELLO", "style": style }]
+        });
+        if let Some(f) = doc_font {
+            v["font"] = json!(f);
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let default =
+        render_png_with_fonts(&doc(json!({}), None), &serde_json::Value::Null, &fonts).unwrap();
+    let per_el = render_png_with_fonts(
+        &doc(json!({ "font": "alt" }), None),
+        &serde_json::Value::Null,
+        &fonts,
+    )
+    .unwrap();
+    let per_doc = render_png_with_fonts(
+        &doc(json!({}), Some("alt")),
+        &serde_json::Value::Null,
+        &fonts,
+    )
+    .unwrap();
+
+    assert_eq!(&per_el[0..4], &[0x89, b'P', b'N', b'G']);
+    assert_ne!(
+        default, per_el,
+        "a different font family must change the raster"
+    );
+    assert_eq!(
+        per_el, per_doc,
+        "the doc-level default font resolves like a per-element one"
     );
 }
 

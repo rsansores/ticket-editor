@@ -42,7 +42,8 @@ mod qr;
 mod render;
 mod schema;
 
-pub use render::{render_png, RenderError};
+pub use font::{FontFaces, Fonts, DEFAULT_FAMILY};
+pub use render::{render_png, render_png_with_fonts, RenderError};
 pub use schema::{
     Align, Computed, CondOp, Condition, Element, ElementKind, ImageMode, NumberFormat, Paper,
     Region, Rounding, Style, Symbology, TicketDoc, VAlign, SCHEMA_VERSION,

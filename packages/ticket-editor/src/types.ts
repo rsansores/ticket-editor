@@ -39,6 +39,9 @@ export interface Style {
   scale?: number
   /** Vertical placement of the glyph within its cell block (matters at scale>1). */
   valign?: VAlign
+  /** Monospace font family id for this element; falls back to the doc default,
+   *  then the built-in `"mono"`. Must be a family the renderer has been given. */
+  font?: string
 }
 
 /** Numeric formatting for a variable. */
@@ -209,6 +212,8 @@ export interface TicketDoc {
   regions?: Region[]
   /** Calculated variables, exposed under the `calc.` namespace. */
   computed?: Computed[]
+  /** Default monospace font family id for the whole ticket (elements override). */
+  font?: string
 }
 
 /** A node in the variable tree the host app feeds the editor. */
