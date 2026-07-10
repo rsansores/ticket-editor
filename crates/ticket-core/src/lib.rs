@@ -50,10 +50,22 @@ pub use schema::{
 };
 
 /// Convenience: render straight from JSON strings (the shape the wasm/HTTP
-/// boundaries actually deal in). Returns PNG bytes.
+/// boundaries actually deal in). Returns PNG bytes. Uses only the built-in font.
 pub fn render_json(
     doc_json: &str,
     variables_json: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let fonts = Fonts::builtin()?;
+    render_json_with_fonts(doc_json, variables_json, &fonts)
+}
+
+/// Like [`render_json`], but with a caller-provided [`Fonts`] set (built-in plus
+/// any registered families). The error surfaces `MissingFont` when the document
+/// uses a family the set doesn't have.
+pub fn render_json_with_fonts(
+    doc_json: &str,
+    variables_json: &str,
+    fonts: &Fonts,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let doc: TicketDoc = serde_json::from_str(doc_json)?;
     let variables: serde_json::Value = if variables_json.trim().is_empty() {
@@ -61,7 +73,7 @@ pub fn render_json(
     } else {
         serde_json::from_str(variables_json)?
     };
-    Ok(render_png(&doc, &variables)?)
+    Ok(render_png_with_fonts(&doc, &variables, fonts)?)
 }
 
 /// Evaluate a list of calculated variables against sample data and report each
