@@ -32,19 +32,28 @@ function ensureInit(): Promise<void> {
 
 // Families already fetched + registered with the wasm renderer this session.
 const loadedFonts = new Set<string>()
+// In-flight loads, so concurrent renders of the same new font share one fetch.
+const inflightFonts = new Map<string, Promise<void>>()
 
 /** Fetch a family's four faces and register them with the renderer (once). */
-async function ensureFont(id: string): Promise<void> {
-  if (id === 'mono' || loadedFonts.has(id) || has_font(id)) return
+function ensureFont(id: string): Promise<void> {
+  if (id === 'mono' || loadedFonts.has(id) || has_font(id)) return Promise.resolve()
+  const existing = inflightFonts.get(id)
+  if (existing) return existing
   const fam = FONT_LIBRARY.find((f) => f.id === id)
-  if (!fam) return // unknown family → let the render surface `MissingFont`
-  const [regular, bold, italic, boldItalic] = await Promise.all(
+  if (!fam) return Promise.resolve() // unknown family → let the render surface `MissingFont`
+  const load = Promise.all(
     [fam.regular, fam.bold, fam.italic, fam.boldItalic].map((url) =>
       fetch(url).then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
     ),
   )
-  register_font(id, regular, bold, italic, boldItalic)
-  loadedFonts.add(id)
+    .then(([regular, bold, italic, boldItalic]) => {
+      register_font(id, regular, bold, italic, boldItalic)
+      loadedFonts.add(id)
+    })
+    .finally(() => inflightFonts.delete(id))
+  inflightFonts.set(id, load)
+  return load
 }
 
 /** The font families a document references (doc default + per-element). */

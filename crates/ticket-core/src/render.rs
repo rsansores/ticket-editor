@@ -87,8 +87,9 @@ struct Placement {
     bold: bool,
     italic: bool,
     valign: VAlign,
-    /// Resolved monospace family id (`None` → built-in default).
-    font: Option<String>,
+    /// Resolved monospace family id (`None` → built-in default). `Rc` so an
+    /// element's glyphs share one allocation instead of one per character.
+    font: Option<std::rc::Rc<str>>,
 }
 
 /// A pre-rasterized 1-bit block (logo or QR) to composite onto the canvas.
@@ -104,8 +105,7 @@ struct RasterBlock {
 
 /// Render a document to PNG bytes using only the built-in font.
 pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderError> {
-    let fonts = Fonts::builtin().map_err(|e| RenderError::Font(e.to_string()))?;
-    render_png_with_fonts(doc, variables, &fonts)
+    render_png_with_fonts(doc, variables, Fonts::builtin_shared())
 }
 
 /// Render a document to PNG bytes with a caller-provided font set — the built-in
@@ -359,6 +359,8 @@ fn lay_out(
                             return Err(RenderError::MissingFont(f.to_string()));
                         }
                     }
+                    // One allocation per element; each glyph shares it via `Rc`.
+                    let family: Option<std::rc::Rc<str>> = family.map(std::rc::Rc::from);
                     let display = resolve_display(el, loop_ctx, variables);
                     let lines = fit_lines(el, &display, content_cols, scale);
                     for (li, line) in lines.iter().enumerate() {
@@ -376,7 +378,7 @@ fn lay_out(
                                 bold: el.style.bold,
                                 italic: el.style.italic,
                                 valign: el.style.valign,
-                                font: family.map(str::to_string),
+                                font: family.clone(),
                             });
                         }
                     }

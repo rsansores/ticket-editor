@@ -72,6 +72,16 @@ pub struct Fonts {
 }
 
 impl Fonts {
+    /// A process-wide, parse-once built-in font set. The convenience renderers use
+    /// this so they don't re-copy and re-parse the ~1.2 MB of embedded faces on
+    /// every call. Panics only if the *embedded* fonts are corrupt — a broken
+    /// build, not runtime input — which the test suite would catch immediately.
+    pub(crate) fn builtin_shared() -> &'static Fonts {
+        use std::sync::OnceLock;
+        static BUILTIN: OnceLock<Fonts> = OnceLock::new();
+        BUILTIN.get_or_init(|| Fonts::builtin().expect("embedded fonts must be valid"))
+    }
+
     /// Just the built-in family (id [`DEFAULT_FAMILY`]). Parsing is infallible in
     /// practice — the bytes ship with the crate — but returns a `Result` so a
     /// corrupt build fails loudly rather than panicking inside rendering.

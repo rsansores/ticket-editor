@@ -55,8 +55,7 @@ pub fn render_json(
     doc_json: &str,
     variables_json: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let fonts = Fonts::builtin()?;
-    render_json_with_fonts(doc_json, variables_json, &fonts)
+    render_json_with_fonts(doc_json, variables_json, Fonts::builtin_shared())
 }
 
 /// Like [`render_json`], but with a caller-provided [`Fonts`] set (built-in plus
