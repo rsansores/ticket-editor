@@ -21,12 +21,26 @@ const variables = {
       { product: 'Cat Toy', qty: 1, amount: 8.99 },
       { product: 'Fish Food', qty: 3, amount: 12.75 },
     ],
-    store: { name: 'Pet Palace', address: '123 Main St' },
+    // Payment movements for the "cut" — drives the conditional-total examples.
+    movements: [
+      { payment: 'CASH', amount: 20.0 },
+      { payment: 'CARD', amount: 15.0 },
+      { payment: 'CASH', amount: 6.62 },
+    ],
+    store: { name: 'Pet Palace', address: '123 Main St', lat: '19.4326', lng: '-99.1332' },
   },
 }
 
 const doc = ref<TicketDoc>({
-  version: 1,
+  version: 2,
+  // Calculated values — small formulas over the variables above. The QR at the
+  // bottom points at `calc.maps_link`, and the cut totals sum movements by type.
+  computed: [
+    { name: 'maps_link', formula: 'concat("https://maps.google.com/?q=", sale.store.lat, ",", sale.store.lng)' },
+    { name: 'cash_total', formula: 'sumif(sale.movements, payment == "CASH", amount)' },
+    { name: 'card_total', formula: 'sumif(sale.movements, payment == "CARD", amount)' },
+    { name: 'sales_line', formula: 'concat(count(sale.movements), " payments in the cut")' },
+  ],
   paper: {
     width_chars: 40,
     margin_left_chars: 1,
@@ -63,6 +77,8 @@ const doc = ref<TicketDoc>({
     { id: 'tl', row: 7, col: 0, type: 'text', content: 'TOTAL:', style: { bold: true, scale: 2 } },
     { id: 'tv', row: 7, col: 20, type: 'variable', path: 'sale.total', length: 19, align: 'right',
       number: { decimals: 2, rounding: 'half_up', thousands: true }, style: { bold: true, scale: 2 } },
+    // QR built from the calculated maps link — scans to the store's location.
+    { id: 'qr', row: 9, col: 13, type: 'qr', value: 'calc.maps_link', from_variable: true, size: 12 },
   ],
 })
 

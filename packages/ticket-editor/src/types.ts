@@ -2,7 +2,7 @@
 // Kept structurally identical so a TicketDoc round-trips through the wasm renderer
 // unchanged. If you edit one side, edit the other.
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export type Align = 'left' | 'right' | 'center'
 export type VAlign = 'top' | 'middle' | 'bottom'
@@ -135,12 +135,59 @@ export interface Paper {
   min_rows?: number
 }
 
+/**
+ * A calculated variable: a named value derived from other variables by a small
+ * formula. Exposed to the whole document at path `calc.<name>`, so a QR /
+ * variable / condition uses it exactly like host data. The formula is evaluated
+ * by the wasm renderer (same engine native + browser), so preview == print.
+ *
+ * The formula is a spreadsheet-like expression: dotted variable paths, `"text"`
+ * and number literals, `+ - * / %`, comparisons and `and`/`or`, and functions
+ * incl. aggregates over loop arrays — e.g.
+ * `sumif(sale.movements, payment == "CASH", qty)` or `count(sale.sales)`.
+ */
+export interface Computed {
+  /** Unique name; the value is available at `calc.<name>`. */
+  name: string
+  /** The formula evaluated to produce the value. */
+  formula: string
+}
+
+/** One entry offered in the formula editor's "Insert variable" picker. */
+export interface VarOption {
+  /** Text shown in the dropdown. */
+  label: string
+  /** Text inserted into the formula (an absolute path, or a bare row field). */
+  insert: string
+}
+
+/** A labelled group of variable options — e.g. "Values", "Lists", or the row
+ *  fields of a specific list ("in each sale.movements row"). Grouping is what
+ *  teaches that inside an aggregate you use a row's short field name. */
+export interface VarGroup {
+  label: string
+  options: VarOption[]
+}
+
+/** One calculated variable's live result, from the wasm preview endpoint. */
+export interface ComputedResult {
+  name: string
+  /** The evaluated value as a display string (empty when it errored). */
+  value: string
+  /** Result kind — drives default formatting when placed on the ticket. */
+  kind: 'number' | 'text' | 'empty'
+  /** A parse/evaluation error message, or null when the formula is valid. */
+  error: string | null
+}
+
 export interface TicketDoc {
   version: number
   paper: Paper
   elements: Element[]
   /** Flow bands: loops (repeat per item) and/or conditionals (collapse when false). */
   regions?: Region[]
+  /** Calculated variables, exposed under the `calc.` namespace. */
+  computed?: Computed[]
 }
 
 /** A node in the variable tree the host app feeds the editor. */

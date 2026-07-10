@@ -33,6 +33,7 @@
 #![warn(missing_docs)]
 
 mod data;
+mod expr;
 mod font;
 mod format;
 mod image;
@@ -42,8 +43,8 @@ mod schema;
 
 pub use render::{render_png, RenderError};
 pub use schema::{
-    Align, CondOp, Condition, Element, ElementKind, ImageMode, NumberFormat, Paper, Region,
-    Rounding, Style, TicketDoc, VAlign, SCHEMA_VERSION,
+    Align, Computed, CondOp, Condition, Element, ElementKind, ImageMode, NumberFormat, Paper,
+    Region, Rounding, Style, TicketDoc, VAlign, SCHEMA_VERSION,
 };
 
 /// Convenience: render straight from JSON strings (the shape the wasm/HTTP
@@ -59,4 +60,34 @@ pub fn render_json(
         serde_json::from_str(variables_json)?
     };
     Ok(render_png(&doc, &variables)?)
+}
+
+/// Evaluate a list of calculated variables against sample data and report each
+/// one's result — used by the editor for a live preview and error feedback as the
+/// user types a formula. Returns a JSON array of
+/// `{ name, value, kind, error }` where `kind` is `"number" | "text" | "empty"`
+/// (drives the editor's default formatting) and `error` is null on success.
+pub fn preview_computed_json(
+    computed_json: &str,
+    variables_json: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let computed: Vec<Computed> = serde_json::from_str(computed_json)?;
+    let variables: serde_json::Value = if variables_json.trim().is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(variables_json)?
+    };
+    let report = data::eval_computed_report(&variables, &computed);
+    let arr: Vec<serde_json::Value> = report
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name,
+                "value": data::value_to_string(&r.value),
+                "kind": data::kind_of(&r.value),
+                "error": r.error,
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string(&serde_json::Value::Array(arr))?)
 }

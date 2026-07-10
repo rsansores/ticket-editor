@@ -17,8 +17,7 @@ use wasm_bindgen::prelude::*;
 /// human-readable message (the editor surfaces it instead of silently blanking).
 #[wasm_bindgen]
 pub fn render_png(doc_json: &str, variables_json: &str) -> Result<Vec<u8>, JsError> {
-    ticket_core::render_json(doc_json, variables_json)
-        .map_err(|e| JsError::new(&e.to_string()))
+    ticket_core::render_json(doc_json, variables_json).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// The schema version this wasm build understands, so the JS side can guard
@@ -26,4 +25,18 @@ pub fn render_png(doc_json: &str, variables_json: &str) -> Result<Vec<u8>, JsErr
 #[wasm_bindgen]
 pub fn schema_version() -> u32 {
     ticket_core::SCHEMA_VERSION
+}
+
+/// Evaluate calculated variables against sample data, for the editor's live
+/// formula preview + error feedback.
+///
+/// * `computed_json` — a JSON array of `{ name, formula }`.
+/// * `variables_json` — the sample data (`""`/`"null"` for none).
+///
+/// Returns a JSON array of `{ name, value, kind, error }`. Throws only on
+/// malformed JSON input; a bad *formula* is reported per-item via its `error`.
+#[wasm_bindgen]
+pub fn preview_computed(computed_json: &str, variables_json: &str) -> Result<String, JsError> {
+    ticket_core::preview_computed_json(computed_json, variables_json)
+        .map_err(|e| JsError::new(&e.to_string()))
 }

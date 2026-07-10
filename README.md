@@ -209,18 +209,39 @@ definition yields both the editor's sample tree and the real render data, so
 they can't diverge. See [`crates/ticket-printable`](crates/ticket-printable) —
 it's DB- and framework-agnostic (annotate a struct, get JSON).
 
-## Computed values (e.g. a maps QR)
+## Calculated variables (e.g. a maps QR, per-payment totals)
 
-Derived fields are authored in the editor, not the backend: any **text** or
-**literal QR** value may embed `{dotted.path}` tokens, resolved at render time
-by `ticket-core`. Because the same renderer runs in the browser preview and on
-the device, a computed value looks identical in both. Example QR value:
+Derived values are authored in the editor, not the backend. In the **Calculated**
+panel you give a value a name and a small **formula** over your existing
+variables. It appears under the `calc.` namespace and behaves like any other
+variable from then on: use it as a field, in a QR (**From a variable →
+`calc.<name>`**), or in a condition. The editor's formula box has an **Insert
+variable** and **Insert function** picker (so you never memorise names or
+syntax), a self-documenting function list, and a live preview + error line
+evaluated by the same engine that prints — so preview == print by construction.
 
+The formula language is spreadsheet-like:
+
+- dotted variable paths (`sale.total`, `calc.subtotal`), `"text"` and number
+  literals, `+ - * / %` with parentheses, comparisons (`== != < <= > >=`) and
+  `and` / `or`;
+- functions: `concat`, `round`, `min`, `max`, `abs`, `coalesce`;
+- **aggregates over a loop array**: `count`, `countif`, `sum`, `sumif`, `avg`,
+  `avgif` — bare field names inside them refer to the current row.
+
+```text
+maps_link  = concat("https://maps.google.com/?q=", store.lat, ",", store.lng)
+cash_total = sumif(sale.movements, payment == "CASH", amount)
+sales_line = concat(count(sale.movements), " payments in the cut")
 ```
-https://maps.google.com/?q={reception_unit.latitude},{reception_unit.longitude}
-```
 
-Literal braces are written `{{` / `}}`.
+That last group is how a POS "cut" ticket shows per-payment totals after a loop —
+declaratively, with no accumulators. The document stores each as
+`{ name, formula }` under `computed` (see `TicketDoc`). Parsing and evaluation
+live in `ticket-core` with strict bounds and no panics; a formula that fails to
+parse renders blank (and the editor shows why), arithmetic falls back to blank on
+a missing/non-numeric operand or divide-by-zero (never NaN), and results are
+cleaned of floating-point noise.
 
 ## Develop
 

@@ -11,9 +11,12 @@ import GridCanvas from './components/GridCanvas.vue'
 import ModifierPanel from './components/ModifierPanel.vue'
 import BandPanel from './components/BandPanel.vue'
 import PreviewPane from './components/PreviewPane.vue'
+import ComputedEditor from './components/ComputedEditor.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
+import { previewComputed } from './composables/useRenderer'
 import { provideEditorI18n, type Messages } from './i18n'
-import type { Element, Region, TicketDoc, VariableType, VarNode } from './types'
+import { SCHEMA_VERSION } from './types'
+import type { Computed, ComputedResult, Element, Region, TicketDoc, VariableType, VarGroup, VarNode, VarOption } from './types'
 import './styles/tokens.css'
 
 const props = defineProps<{
@@ -39,7 +42,7 @@ const t = provideEditorI18n(() => props.locale, () => props.messages)
 
 function blankDoc(): TicketDoc {
   return {
-    version: 1,
+    version: SCHEMA_VERSION,
     paper: { width_chars: 40, margin_left_chars: 1, margin_right_chars: 1,
              margin_top_lines: 1, margin_bottom_lines: 1, cell_width_px: 12, cell_height_px: 22,
       font_px: 20, min_rows: 12 },
@@ -77,9 +80,36 @@ watch(
 )
 
 const tree = computed<VarNode[]>(() => deriveTree(props.variables ?? {}))
-// path -> type: inferred from samples, overridden by explicit host declarations.
+// Calculated variables live on the doc; they surface everywhere host vars do
+// (element source, QR "from variable", conditions) at path `calc.<name>`.
+const computedVars = computed<Computed[]>(() => doc.value.computed ?? [])
+const calcLeaves = computed<{ path: string; key: string }[]>(() =>
+  computedVars.value.map((c) => ({ path: `calc.${c.name}`, key: c.name })),
+)
+// Live results for the calc vars, evaluated by the wasm engine (same as print).
+// Keyed by name → { value, kind, error }. Refreshed whenever the formulas or the
+// sample data change; drives the rail preview and the placed-element type.
+const calcReports = ref<Record<string, ComputedResult>>({})
+watch(
+  [computedVars, () => props.variables],
+  async () => {
+    try {
+      const rep = await previewComputed(computedVars.value, props.variables ?? {})
+      calcReports.value = Object.fromEntries(rep.map((r) => [r.name, r]))
+    } catch {
+      calcReports.value = {}
+    }
+  },
+  { immediate: true, deep: true },
+)
+function calcKind(name: string): VariableType {
+  const k = calcReports.value[name]?.kind
+  return k === 'number' ? 'number' : 'text'
+}
+// path -> type: inferred from samples, then calc-var kinds, then host overrides.
 const types = computed<Record<string, VariableType>>(() => ({
   ...pathTypeMap(tree.value),
+  ...Object.fromEntries(computedVars.value.map((c) => [`calc.${c.name}`, calcKind(c.name)])),
   ...(props.variableTypes ?? {}),
 }))
 function typeOf(path?: string): VariableType {
@@ -102,7 +132,8 @@ const loopSources = computed(() => {
 const allVars = computed(() => {
   const leaves: { path: string; key: string }[] = []
   collect(tree.value, [], leaves)
-  return leaves
+  // Calculated variables are selectable anywhere a variable is (QR, conditions).
+  return [...leaves, ...calcLeaves.value]
 })
 
 const selectedId = ref<string | null>(null)
@@ -178,6 +209,112 @@ function addQr() {
     value: 'https://example.com/r/', from_variable: false, size: 10 }
   doc.value.elements.push(el)
   selectElement(el.id)
+}
+
+// --- calculated variables ---
+// The one being edited, or null when the dialog is closed. Its `name` doubles as
+// the "original name" so a rename still updates in place.
+const editingCalc = ref<Computed | null>(null)
+// Options for the formula editor's "Insert variable" picker, grouped so the row
+// fields of a list are visible as bare names — that's what tells the user what
+// lives inside `this` when they write an aggregate like sumif(movements, …).
+function collectRowFields(nodes: VarNode[], prefix: string, out: VarOption[]) {
+  for (const n of nodes) {
+    // Don't descend into a nested list — its fields aren't bare fields of THIS
+    // row (a per-row aggregate over them would need its own aggregate call).
+    if (n.repeatable) continue
+    if (n.children) collectRowFields(n.children, prefix, out)
+    else {
+      const rel = n.path.startsWith(prefix) ? n.path.slice(prefix.length) : n.key
+      out.push({ label: rel, insert: rel })
+    }
+  }
+}
+function collectGroups(nodes: VarNode[], scalars: VarOption[], lists: VarOption[], rows: VarGroup[]) {
+  for (const n of nodes) {
+    if (n.repeatable) {
+      lists.push({ label: n.path, insert: n.path })
+      const fields: VarOption[] = []
+      collectRowFields(n.children ?? [], `${n.path}.0.`, fields)
+      if (fields.length) rows.push({ label: t('calcGroupRow', { list: n.path }), options: fields })
+    } else if (n.children) {
+      collectGroups(n.children, scalars, lists, rows)
+    } else {
+      scalars.push({ label: n.path, insert: n.path })
+    }
+  }
+}
+const varGroups = computed<VarGroup[]>(() => {
+  const scalars: VarOption[] = []
+  const lists: VarOption[] = []
+  const rows: VarGroup[] = []
+  collectGroups(tree.value, scalars, lists, rows)
+  // Other calc vars are usable too (but not the one being edited — no self-ref).
+  const calcs: VarOption[] = calcLeaves.value
+    .filter((v) => v.path !== `calc.${editingCalc.value?.name}`)
+    .map((v) => ({ label: v.path, insert: v.path }))
+  const groups: VarGroup[] = []
+  const values = [...scalars, ...calcs]
+  if (values.length) groups.push({ label: t('calcGroupValues'), options: values })
+  if (lists.length) groups.push({ label: t('calcGroupLists'), options: lists })
+  groups.push(...rows)
+  return groups
+})
+// The rail's small live value (or a marker) for a calc var.
+function calcPreview(name: string): string {
+  const r = calcReports.value[name]
+  if (!r) return '…'
+  if (r.error) return '⚠'
+  return r.value === '' ? '—' : r.value
+}
+function calcHasError(name: string): boolean {
+  return !!calcReports.value[name]?.error
+}
+// Evaluate a DRAFT formula through the wasm engine. Preview must match print, so
+// evaluate the draft IN THE SAME POSITION the real doc will: for an edit, replace
+// the var in place (so forward references resolve exactly as they will at render
+// — earlier-only); for a new var, append it. The sentinel key can't collide with
+// a real name because the editor forbids non-`[A-Za-z_]` names.
+const DRAFT_KEY = '--draft--'
+async function previewFormula(formula: string): Promise<ComputedResult> {
+  const all = computedVars.value
+  const orig = editingCalc.value?.name
+  const idx = orig ? all.findIndex((c) => c.name === orig) : -1
+  const key = idx >= 0 ? all[idx].name : DRAFT_KEY
+  const list =
+    idx >= 0
+      ? all.map((c, i) => (i === idx ? { name: key, formula } : c))
+      : [...all, { name: key, formula }]
+  const rep = await previewComputed(list, props.variables ?? {})
+  return rep.find((r) => r.name === key) ?? { name: key, value: '', kind: 'empty', error: null }
+}
+function newCalc() {
+  editingCalc.value = { name: '', formula: '' }
+}
+function editCalc(c: Computed) {
+  editingCalc.value = JSON.parse(JSON.stringify(c)) as Computed
+}
+function saveCalc(next: Computed) {
+  const list = [...(doc.value.computed ?? [])]
+  // Match by the original name captured when the dialog opened (renames keep place).
+  const orig = editingCalc.value?.name
+  const i = orig ? list.findIndex((c) => c.name === orig) : -1
+  if (i >= 0) list[i] = next
+  else list.push(next)
+  doc.value.computed = list
+  editingCalc.value = null
+}
+function removeCalc(name: string) {
+  doc.value.computed = (doc.value.computed ?? []).filter((c) => c.name !== name)
+}
+// Place a calculated variable on the ticket as a Variable element. The value
+// crosses the wasm boundary as a string; coerce a numeric result back to a
+// number so `addVariable` picks sensible decimals (e.g. 123.45 → 2 decimals).
+function addCalcElement(c: Computed) {
+  const r = calcReports.value[c.name]
+  let sample: string | number | undefined
+  if (r && r.value !== '') sample = r.kind === 'number' ? Number(r.value) : r.value
+  addVariable({ key: c.name, path: `calc.${c.name}`, sample, type: calcKind(c.name) })
 }
 
 // Image upload → base64 data URI embedded in the doc (self-contained template).
@@ -330,6 +467,22 @@ async function save() {
         <div v-if="leftOpen" class="te-rail-inner">
           <h3 class="te-rail-title">{{ t('railVariables') }}</h3>
           <VariableTree :nodes="tree" @add="addVariable" />
+
+          <div class="te-calc">
+            <h3 class="te-rail-title te-calc-title">{{ t('railCalculated') }}</h3>
+            <ul v-if="computedVars.length" class="te-calc-list">
+              <li v-for="c in computedVars" :key="c.name" class="te-calc-item">
+                <button class="te-calc-add" type="button" :title="c.formula" @click="addCalcElement(c)">
+                  <span class="te-calc-key">{{ c.name }}</span>
+                  <span class="te-calc-sample" :class="{ 'te-calc-warn': calcHasError(c.name) }">{{ calcPreview(c.name) }}</span>
+                </button>
+                <button class="te-calc-icon" type="button" :aria-label="t('calcEdit')" :title="t('calcEdit')" @click="editCalc(c)">✎</button>
+                <button class="te-calc-icon" type="button" :aria-label="t('calcDelete')" :title="t('calcDelete')" @click="removeCalc(c.name)">🗑</button>
+              </li>
+            </ul>
+            <p v-else class="te-calc-empty">{{ t('calcEmpty') }}</p>
+            <button class="te-calc-new" type="button" @click="newCalc">{{ t('calcAddNew') }}</button>
+          </div>
         </div>
       </aside>
 
@@ -364,6 +517,10 @@ async function save() {
         </div>
       </aside>
     </div>
+
+    <ComputedEditor v-if="editingCalc" :model-value="editingCalc" :var-groups="varGroups"
+      :preview="previewFormula" :existing-names="computedVars.map((c) => c.name)"
+      @save="saveCalc" @cancel="editingCalc = null" />
   </div>
 </template>
 
@@ -400,4 +557,25 @@ async function save() {
 .te-chip { border: 1px solid var(--te-input); background: var(--te-card); color: var(--te-muted-fg); border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.72rem; cursor: pointer; }
 .te-chip:hover { background: var(--te-accent); }
 .te-upload-err { color: #dc2626; font-size: 0.78rem; }
+/* calculated variables section (left rail) */
+.te-calc { margin-top: 0.9rem; padding-top: 0.6rem; border-top: 1px solid var(--te-border); }
+.te-calc-title { margin-top: 0; }
+.te-calc-list { list-style: none; margin: 0 0 0.4rem; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.te-calc-item { display: flex; align-items: center; gap: 0.15rem; }
+.te-calc-add {
+  display: flex; align-items: baseline; gap: 0.4rem; flex: 1; min-width: 0; padding: 0.25rem 0.4rem;
+  border: 0; border-radius: calc(var(--te-radius) - 2px); background: transparent; color: inherit; cursor: pointer; text-align: left;
+}
+.te-calc-add:hover { background: var(--te-accent); }
+.te-calc-key { font-weight: 500; font-size: 0.85rem; }
+.te-calc-sample { margin-left: auto; color: var(--te-muted-fg); font-family: ui-monospace, monospace; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 8ch; }
+.te-calc-warn { color: #dc2626; }
+.te-calc-icon { border: 0; background: transparent; color: var(--te-muted-fg); cursor: pointer; font-size: 0.75rem; padding: 0.15rem; flex: none; }
+.te-calc-icon:hover { color: inherit; }
+.te-calc-empty { margin: 0 0 0.4rem; color: var(--te-muted-fg); font-size: 0.74rem; line-height: 1.35; }
+.te-calc-new {
+  width: 100%; padding: 0.3rem 0.5rem; border: 1px dashed var(--te-input); border-radius: calc(var(--te-radius) - 2px);
+  background: transparent; color: var(--te-primary); cursor: pointer; font: inherit; font-size: 0.78rem;
+}
+.te-calc-new:hover { background: var(--te-accent); }
 </style>

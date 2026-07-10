@@ -97,6 +97,16 @@ struct RasterBlock {
 /// Render a document to PNG bytes.
 pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderError> {
     let fonts = FontSet::load().map_err(|e| RenderError::Font(e.to_string()))?;
+    // Evaluate calculated variables once and expose them under `calc.*`, so every
+    // downstream resolver (variables, QR-from-variable, conditions, loops) treats
+    // them like ordinary data. Skipped entirely when the document has none.
+    let merged;
+    let variables = if doc.computed.is_empty() {
+        variables
+    } else {
+        merged = data::with_computed(variables, &doc.computed);
+        &merged
+    };
     let (placements, blocks, total_rows) = lay_out(doc, variables)?;
     rasterize(doc, &placements, &blocks, total_rows, &fonts)
 }
@@ -231,15 +241,14 @@ fn lay_out(
                     size,
                 } => {
                     let text = if *from_variable {
+                        // The path may point at a calculated variable (`calc.*`),
+                        // e.g. a maps URL built from lat/lng — resolved like any other.
                         match data::resolve_loop(loop_ctx, variables, value) {
                             Some(v) => data::value_to_string(v),
                             None => data::fake_for(value),
                         }
                     } else {
-                        // A literal QR may embed `{path}` tokens — the editor's
-                        // computed-value mechanism (e.g. a maps URL built from
-                        // lat/lng). No tokens → returned verbatim.
-                        data::interpolate(value, loop_ctx, variables)
+                        value.clone()
                     };
                     let side64 = u64::from((*size).max(1)) * cell_w64; // square (scannable)
                     if side64 > MAX_PIXELS || side64 * side64 > MAX_PIXELS {
@@ -396,15 +405,9 @@ fn placeholder_mask(w: u32, h: u32) -> Vec<bool> {
 /// loop context / faker, then number or date formatting).
 fn resolve_display(el: &Element, loop_ctx: data::LoopCtx, root: &Value) -> String {
     match &el.kind {
-        // Static text may embed `{path}` tokens (editor computed values);
-        // interpolate only when present so plain literals are untouched.
-        ElementKind::Text { content } => {
-            if data::has_tokens(content) {
-                data::interpolate(content, loop_ctx, root)
-            } else {
-                content.clone()
-            }
-        }
+        // Static text renders verbatim. A value derived from other variables is
+        // authored as a calculated variable and placed as a `Variable` element.
+        ElementKind::Text { content } => content.clone(),
         ElementKind::Variable {
             path,
             number,
