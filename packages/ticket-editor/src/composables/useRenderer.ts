@@ -10,7 +10,7 @@ import init, {
 } from '../wasm/ticket_wasm.js'
 // Vite resolves this to a URL; the .wasm ships as an asset.
 import wasmUrl from '../wasm/ticket_wasm_bg.wasm?url'
-import { FONT_LIBRARY } from '../lib/fonts'
+import { loadFontBytes } from '../lib/fonts'
 import type { Computed, ComputedResult, TicketDoc } from '../types'
 
 let ready: Promise<void> | null = null
@@ -40,15 +40,10 @@ function ensureFont(id: string): Promise<void> {
   if (id === 'mono' || loadedFonts.has(id) || has_font(id)) return Promise.resolve()
   const existing = inflightFonts.get(id)
   if (existing) return existing
-  const fam = FONT_LIBRARY.find((f) => f.id === id)
-  if (!fam) return Promise.resolve() // unknown family → let the render surface `MissingFont`
-  const load = Promise.all(
-    [fam.regular, fam.bold, fam.italic, fam.boldItalic].map((url) =>
-      fetch(url).then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b)),
-    ),
-  )
-    .then(([regular, bold, italic, boldItalic]) => {
-      register_font(id, regular, bold, italic, boldItalic)
+  const load = loadFontBytes(id)
+    .then((faces) => {
+      if (!faces) return // unknown family → let the render surface `MissingFont`
+      register_font(id, faces.regular, faces.bold, faces.italic, faces.boldItalic)
       loadedFonts.add(id)
     })
     .finally(() => inflightFonts.delete(id))

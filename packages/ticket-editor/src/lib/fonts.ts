@@ -1,8 +1,7 @@
-// The editor's monospace font library. Each family's four faces are separate
-// TTF assets under src/assets/fonts/<id>/, auto-imported here as URLs (Vite emits
-// them as hashed files). The bytes are only fetched when a document uses the
-// family — see `ensureFontsLoaded` in the renderer composable — so the wasm
-// bundle and initial load stay small.
+// The editor's monospace font library. Fonts are loaded PER FAMILY, ON DEMAND:
+// nothing here is statically imported, so a family's faces live in their own
+// code-split chunk that the browser only downloads when a document uses that
+// font. (The npm package can be large; what the end user downloads stays small.)
 //
 // The built-in "mono" family (DejaVu Sans Mono) is compiled into the wasm and is
 // always available; it needs no entry here.
@@ -15,14 +14,12 @@
 /** Family id of the built-in default (matches `DEFAULT_FAMILY` in ticket-core). */
 export const BUILTIN_FONT = 'mono'
 
-/** A lazily-loadable font family: its id, label, and the four faces' asset URLs. */
-export interface FontFamily {
-  id: string
-  label: string
-  regular: string
-  bold: string
-  italic: string
-  boldItalic: string
+/** The four faces of a family, as raw TTF bytes ready for `register_font`. */
+export interface FontFaceBytes {
+  regular: Uint8Array
+  bold: Uint8Array
+  italic: Uint8Array
+  boldItalic: Uint8Array
 }
 
 // Curated display order + human labels (grouped clean → typewriter → playful).
@@ -44,36 +41,34 @@ const FAMILIES: { id: string; label: string }[] = [
   { id: 'vt323', label: 'VT323 (retro terminal)' },
 ]
 
-// All face URLs, keyed by "<id>/<face>", resolved at build time by Vite.
-const urls = import.meta.glob('../assets/fonts/*/*.ttf', {
-  eager: true,
+// LAZY glob: each entry is a `() => import('…')` that resolves to the face's URL.
+// Because it is non-eager, Vite/the host bundler code-splits every face into its
+// own chunk, fetched only when `loadFontBytes` runs for that family.
+const faceLoaders = import.meta.glob('../assets/fonts/*/*.ttf', {
   query: '?url',
   import: 'default',
-}) as Record<string, string>
+}) as Record<string, () => Promise<string>>
 
-function faceUrl(id: string, face: string): string | undefined {
-  return urls[`../assets/fonts/${id}/${face}.ttf`]
+const FACES = ['regular', 'bold', 'italic', 'bold-italic'] as const
+
+/**
+ * Load a family's four faces as bytes, on demand. Triggers the per-face lazy
+ * chunk imports, then fetches each URL. Returns null for an unknown family (the
+ * caller lets the render surface `MissingFont`). A family that ships fewer
+ * weights isn't handled here — all bundled families carry four faces.
+ */
+export async function loadFontBytes(id: string): Promise<FontFaceBytes | null> {
+  const loaders = FACES.map((face) => faceLoaders[`../assets/fonts/${id}/${face}.ttf`])
+  if (loaders.some((l) => !l)) return null
+  const urls = await Promise.all(loaders.map((load) => load()))
+  const [regular, bold, italic, boldItalic] = await Promise.all(
+    urls.map((url) => fetch(url).then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b))),
+  )
+  return { regular, bold, italic, boldItalic }
 }
-
-/** Families the editor can fetch on demand (the built-in is separate). Only those
- *  whose asset files are actually present are included. */
-export const FONT_LIBRARY: FontFamily[] = FAMILIES.flatMap((f) => {
-  const regular = faceUrl(f.id, 'regular')
-  if (!regular) return []
-  return [
-    {
-      id: f.id,
-      label: f.label,
-      regular,
-      bold: faceUrl(f.id, 'bold') ?? regular,
-      italic: faceUrl(f.id, 'italic') ?? regular,
-      boldItalic: faceUrl(f.id, 'bold-italic') ?? regular,
-    },
-  ]
-})
 
 /** Options for a font picker: the built-in default first, then the library. */
 export const FONT_OPTIONS: { id: string; label: string }[] = [
   { id: BUILTIN_FONT, label: 'DejaVu Sans Mono (default)' },
-  ...FONT_LIBRARY.map((f) => ({ id: f.id, label: f.label })),
+  ...FAMILIES.map((f) => ({ id: f.id, label: f.label })),
 ]

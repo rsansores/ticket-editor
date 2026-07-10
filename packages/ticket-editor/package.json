@@ -29,14 +29,14 @@
     "dist",
     "src/wasm"
   ],
-  "main": "./dist/ticket-editor.umd.cjs",
+  "main": "./dist/ticket-editor.cjs",
   "module": "./dist/ticket-editor.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/ticket-editor.js",
-      "require": "./dist/ticket-editor.umd.cjs"
+      "require": "./dist/ticket-editor.cjs"
     },
     "./styles.css": "./dist/ticket-editor.css"
   },
