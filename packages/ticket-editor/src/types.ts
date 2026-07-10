@@ -57,11 +57,15 @@ export interface TextKind {
 /** How a color image is reduced to 1-bit black/white for a thermal printer. */
 export type ImageMode = { kind: 'threshold'; level: number } | { kind: 'dither' }
 
-/** A monochrome logo, base64 PNG, occupying w×h cells. */
+/** A monochrome image occupying w×h cells: a static logo (base64 PNG embedded in
+ *  `data`) or a dynamic image (signature, plot) whose base64 is resolved from a
+ *  variable path when `from_variable` is true. */
 export interface ImageKind {
   type: 'image'
-  /** base64 PNG (with or without a `data:` prefix). */
+  /** base64 PNG (with/without a `data:` prefix), or a variable path when from_variable. */
   data: string
+  /** If true, `data` is a variable path resolved to the base64 at render time. */
+  from_variable?: boolean
   w: number
   h: number
   mode?: ImageMode

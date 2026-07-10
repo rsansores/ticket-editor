@@ -222,13 +222,22 @@ pub enum ElementKind {
         /// The literal text.
         content: String,
     },
-    /// A monochrome image (logo). Provided as base64 PNG (optionally a
-    /// `data:` URI). Occupies `w × h` character cells; the renderer scales it to
-    /// that pixel box and reduces it to 1-bit black/white the same way the
-    /// printer will — so the preview is exactly what prints.
+    /// A monochrome image (logo, or a dynamic image like a signature or a plot).
+    /// Occupies `w × h` character cells; the renderer scales it to that pixel box
+    /// and reduces it to 1-bit black/white the same way the printer will — so the
+    /// preview is exactly what prints.
     Image {
-        /// base64-encoded PNG bytes (with or without a `data:image/png;base64,` prefix).
+        /// The image source. When `from_variable` is false, this is base64-encoded
+        /// PNG bytes (with or without a `data:image/png;base64,` prefix), embedded
+        /// in the document. When `from_variable` is true, this is a variable path
+        /// resolved at render time to the same base64 string (e.g. a per-sale
+        /// signature the backend supplies). A missing/undecodable source draws a
+        /// placeholder frame rather than failing.
         data: String,
+        /// If true, `data` is a variable path resolved from the data; else the
+        /// base64 image bytes are used directly.
+        #[serde(default)]
+        from_variable: bool,
         /// Width in character cells.
         w: u32,
         /// Height in character cells.

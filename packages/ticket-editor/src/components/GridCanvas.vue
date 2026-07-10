@@ -189,7 +189,19 @@ function isOffPaper(el: Element): boolean {
   const f = fp(el)
   return ml.value + el.col + f.cols > printableRight.value || ml.value + el.col < ml.value
 }
+// Paths that exist in the current variable catalog (host data + calc vars).
+const knownPaths = computed(() => new Set((props.allVars ?? []).map((v) => v.path)))
+// An element that references a variable NOT in the catalog — e.g. a design
+// imported into a system with different variables. Flagged so the user can
+// remove it or point it at a real variable.
+function isUnavailable(el: Element): boolean {
+  if (el.type === 'variable') return !!el.path && !knownPaths.value.has(el.path)
+  if (el.type === 'qr' && el.from_variable) return !!el.value && !knownPaths.value.has(el.value)
+  if (el.type === 'image' && el.from_variable) return !!el.data && !knownPaths.value.has(el.data)
+  return false
+}
 function label(el: Element): string {
+  if (isUnavailable(el)) return t('unavailable')
   return el.type === 'variable' ? el.path ?? '' : el.content ?? ''
 }
 
@@ -322,6 +334,7 @@ function onPointerUp() {
           media: el.type === 'image' || el.type === 'qr',
           overlap: overlapping.has(el.id),
           offpaper: isOffPaper(el),
+          unavailable: isUnavailable(el),
         }"
         :style="{
           left: (ml + el.col) * cw + 'px',
@@ -340,10 +353,11 @@ function onPointerUp() {
         }"
         @pointerdown="onPointerDown($event, el)"
       >
-        <img v-if="el.type === 'image' && el.data" :src="el.data" class="te-el-img" alt="logo" draggable="false" />
-        <span v-else-if="el.type === 'image'" class="te-el-ph">image</span>
+        <img v-if="el.type === 'image' && el.data && !el.from_variable" :src="el.data" class="te-el-img" alt="logo" draggable="false" />
+        <span v-else-if="el.type === 'image'" class="te-el-ph">{{ isUnavailable(el) ? t('unavailable') : el.from_variable ? '⟳ ' + (el.data ? leaf(el.data) : 'image') : 'image' }}</span>
         <span v-else-if="el.type === 'qr'" class="te-el-ph">▦ QR</span>
         <span v-else class="te-el-text">{{ label(el) }}</span>
+        <span v-if="isUnavailable(el)" class="te-el-badge unavail" :title="t('unavailableTip')">⚠</span>
         <span v-if="el.type === 'variable' && el.wrap" class="te-el-badge wrap" title="Wraps to multiple lines">↩{{ fp(el).lines }}</span>
         <span v-if="overlapping.has(el.id)" class="te-el-badge warn" title="Overlaps another element">⚠</span>
         <span v-if="isOffPaper(el)" class="te-el-badge off" title="Extends past the paper edge">⇥</span>
@@ -572,6 +586,16 @@ function onPointerUp() {
 .te-el.offpaper {
   outline: 2px dashed #dc2626;
   opacity: 0.85;
+}
+/* references a variable that doesn't exist in the current catalog */
+.te-el.unavailable {
+  outline: 2px solid #dc2626;
+  background: color-mix(in srgb, #dc2626 15%, transparent);
+  color: #dc2626;
+}
+.te-el-badge.unavail {
+  right: -2px;
+  color: #dc2626;
 }
 .te-el:active {
   cursor: grabbing;

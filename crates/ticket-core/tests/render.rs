@@ -394,6 +394,27 @@ fn adversarial_inputs_do_not_panic() {
 }
 
 #[test]
+fn image_from_variable_resolves_and_falls_back_to_placeholder() {
+    // A dynamic image (e.g. a signature) resolves its base64 from a variable; a
+    // missing source draws the placeholder frame, and the two must differ.
+    // A valid 8x8 checkerboard PNG (base64), distinct from the placeholder frame.
+    let png_8x8 = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAF0lEQVR42mNgYGD4//8/FhK7KAQMPh0AXXNfoWyFCAcAAAAASUVORK5CYII=";
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "img", "row": 0, "col": 0, "type": "image",
+                       "data": "sale.signature", "from_variable": true, "w": 8, "h": 4 }]
+    }))
+    .unwrap();
+    let resolved = render_png(&doc, &json!({ "sale": { "signature": png_8x8 } })).unwrap();
+    let missing = render_png(&doc, &serde_json::Value::Null).unwrap(); // → placeholder
+    assert_eq!(&resolved[0..4], &[0x89, b'P', b'N', b'G']);
+    assert_ne!(
+        resolved, missing,
+        "a resolved image must differ from the placeholder"
+    );
+}
+
+#[test]
 fn bad_image_bytes_render_placeholder_not_error() {
     // Undecodable base64/PNG draws a placeholder frame — still a valid PNG.
     let doc: TicketDoc = serde_json::from_value(json!({

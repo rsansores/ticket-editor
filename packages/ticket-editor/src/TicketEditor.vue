@@ -311,43 +311,15 @@ function addCalcElement(c: Computed) {
   addVariable({ key: c.name, path: `calc.${c.name}`, sample, type: calcKind(c.name) })
 }
 
-// Image upload → base64 data URI embedded in the doc (self-contained template).
-// Capped: the bytes live inside every persisted/rendered document.
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024
-const uploadError = ref('')
-const fileInput = ref<HTMLInputElement>()
-function pickImage() {
-  fileInput.value?.click()
-}
-function readImage(f: File, onData: (dataUrl: string) => void) {
-  uploadError.value = ''
-  if (!f.type.startsWith('image/')) {
-    uploadError.value = 'Not an image file'
-    return
-  }
-  if (f.size > MAX_IMAGE_BYTES) {
-    uploadError.value = 'Image too large (max 2 MB)'
-    return
-  }
-  const reader = new FileReader()
-  reader.onerror = () => { uploadError.value = 'Could not read the file' }
-  reader.onload = () => {
-    if (typeof reader.result === 'string') onData(reader.result)
-    else uploadError.value = 'Could not read the file'
-  }
-  reader.readAsDataURL(f)
-}
-function onImageFile(e: Event) {
-  const input = e.target as HTMLInputElement
-  const f = input.files?.[0]
-  input.value = '' // allow re-picking the same file
-  if (!f) return
-  readImage(f, (data) => {
-    const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'image',
-      data, w: 16, h: 6, mode: { kind: 'threshold', level: 128 } }
-    doc.value.elements.push(el)
-    selectElement(el.id)
-  })
+// Add a DYNAMIC image: its bytes come from a variable at print time (a signature,
+// a plot, …). This is the default because it's the common case; providing a file
+// in the modifier panel downgrades it to a static, embedded image. No upload
+// dialog on add — an image with no source just shows a placeholder.
+function addImage() {
+  const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'image',
+    data: '', from_variable: true, w: 16, h: 6, mode: { kind: 'threshold', level: 128 } }
+  doc.value.elements.push(el)
+  selectElement(el.id)
 }
 function updateElement(next: Element) {
   const i = doc.value.elements.findIndex((e) => e.id === next.id)
@@ -440,11 +412,9 @@ async function save() {
         <span class="te-muted">{{ zoom.toFixed(1) }}×</span>
       </label>
       <button class="te-btn te-btn-ghost" type="button" @click="addText">{{ t('addText') }}</button>
-      <button class="te-btn te-btn-ghost" type="button" @click="pickImage">{{ t('addImage') }}</button>
+      <button class="te-btn te-btn-ghost" type="button" @click="addImage">{{ t('addImage') }}</button>
       <button class="te-btn te-btn-ghost" type="button" @click="addQr">{{ t('addQr') }}</button>
-      <input ref="fileInput" type="file" accept="image/png,image/*" hidden @change="onImageFile" />
       <button class="te-btn te-btn-ghost" type="button" :title="t('fitToWidthTip')" @click="fitToWidth">{{ t('fitToWidth') }}</button>
-      <span v-if="uploadError" class="te-upload-err" role="alert">{{ uploadError }}</span>
       <div class="te-spacer" />
       <button v-if="onSave" class="te-btn te-btn-primary" type="button" :disabled="saving" @click="save">
         {{ saving ? t('saving') : t('save') }}
@@ -552,7 +522,6 @@ async function save() {
 .te-btn-primary:disabled { opacity: 0.6; cursor: default; }
 .te-chip { border: 1px solid var(--te-input); background: var(--te-card); color: var(--te-muted-fg); border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.72rem; cursor: pointer; }
 .te-chip:hover { background: var(--te-accent); }
-.te-upload-err { color: #dc2626; font-size: 0.78rem; }
 /* calculated variables section (left rail) */
 .te-calc { margin-top: 0.9rem; padding-top: 0.6rem; border-top: 1px solid var(--te-border); }
 .te-calc-title { margin-top: 0; }

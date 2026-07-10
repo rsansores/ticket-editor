@@ -207,7 +207,13 @@ fn lay_out(
             }
             let y_off_px = el.y_offset * cell_h as f32;
             match &el.kind {
-                ElementKind::Image { data, w, h, mode } => {
+                ElementKind::Image {
+                    data,
+                    from_variable,
+                    w,
+                    h,
+                    mode,
+                } => {
                     // Bound the block in u64 BEFORE decoding/allocating (adversarial w/h).
                     let w_px64 = u64::from((*w).max(1)) * cell_w64;
                     let h_px64 = u64::from((*h).max(1)) * cell_h64;
@@ -218,7 +224,20 @@ fn lay_out(
                         });
                     }
                     let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
-                    let mask = match image::decode_png_gray(data) {
+                    // A dynamic image (e.g. a signature) resolves its base64 bytes
+                    // from a variable; a missing/undecodable source falls through to
+                    // the placeholder frame below.
+                    let resolved;
+                    let src: &str = if *from_variable {
+                        resolved = match data::resolve_loop(loop_ctx, variables, data) {
+                            Some(v) => data::value_to_string(v),
+                            None => String::new(),
+                        };
+                        &resolved
+                    } else {
+                        data
+                    };
+                    let mask = match image::decode_png_gray(src) {
                         Ok((gray, sw, sh)) => {
                             let scaled = image::resize_gray(&gray, sw, sh, w_px, h_px);
                             image::to_bw(&scaled, w_px, h_px, *mode)

@@ -34,13 +34,25 @@ function onReplaceFile(e: Event) {
   const reader = new FileReader()
   reader.onload = () => {
     if (typeof reader.result === 'string') {
-      emit('update:element', { ...target, data: reader.result })
+      // Providing a file makes the image static (embedded bytes).
+      emit('update:element', { ...target, data: reader.result, from_variable: false })
     }
   }
   reader.readAsDataURL(f)
 }
 
 const el = computed(() => props.element)
+
+// A reference to a variable that isn't in the current catalog (e.g. an imported
+// design). Surfaced so the user can remove the element or point it elsewhere.
+const knownPaths = computed(() => new Set((props.allVars ?? []).map((v) => v.path)))
+const unavailable = computed(() => {
+  const e = el.value
+  if (!e) return false
+  if (e.type === 'variable') return !!e.path && !knownPaths.value.has(e.path)
+  if (e.type === 'qr' && e.from_variable) return !!e.value && !knownPaths.value.has(e.value)
+  return false
+})
 
 function patch(p: Partial<Element>) {
   if (!el.value) return
@@ -49,6 +61,12 @@ function patch(p: Partial<Element>) {
 function patchStyle(p: Partial<NonNullable<Element['style']>>) {
   if (!el.value) return
   emit('update:element', { ...el.value, style: { ...el.value.style, ...p } })
+}
+// Turn a static image back into a dynamic one (bytes from a variable). The
+// reverse — file upload — happens in onReplaceFile.
+function makeDynamic() {
+  if (!el.value) return
+  emit('update:element', { ...el.value, from_variable: true, data: props.allVars?.[0]?.path ?? '' })
 }
 
 const aligns: { v: Align; key: string }[] = [
@@ -113,6 +131,8 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
         <button class="te-mod-del" type="button" :title="t('remove')" :aria-label="t('remove')" @click="emit('remove', el.id)">🗑</button>
       </header>
 
+      <p v-if="unavailable" class="te-mod-warn" role="alert">⚠ {{ t('unavailableTip') }}</p>
+
       <label v-if="el.type === 'text'" class="te-field">
         <span>{{ t('fieldText') }}</span>
         <input class="te-input" :value="el.content"
@@ -121,6 +141,25 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 
       <!-- image -->
       <template v-else-if="el.type === 'image'">
+        <!-- Source: dynamic (a variable) by default; uploading a file makes it a
+             static embedded image. One concept, opposite default. -->
+        <template v-if="el.from_variable">
+          <label class="te-field">
+            <span>{{ t('imageVariable') }}</span>
+            <select class="te-input" :value="el.data"
+              @change="patch({ data: ($event.target as HTMLSelectElement).value })">
+              <option value="" disabled>{{ t('imagePickVar') }}</option>
+              <option v-for="v in allVars ?? []" :key="v.path" :value="v.path">{{ v.path }}</option>
+            </select>
+          </label>
+          <button class="te-btn-replace" type="button" @click="replaceInput?.click()">{{ t('imageUseFile') }}</button>
+        </template>
+        <template v-else>
+          <button class="te-btn-replace" type="button" @click="replaceInput?.click()">{{ t('replaceImage') }}</button>
+          <button class="te-btn-replace" type="button" @click="makeDynamic()">{{ t('imageUseVariable') }}</button>
+        </template>
+        <input ref="replaceInput" type="file" accept="image/png,image/*" hidden @change="onReplaceFile" />
+
         <div class="te-field-row">
           <label class="te-half">
             <span>{{ t('widthCells') }}</span>
@@ -148,8 +187,6 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
             :value="el.mode?.kind === 'threshold' ? el.mode.level : 128"
             @input="patch({ mode: { kind: 'threshold', level: +($event.target as HTMLInputElement).value } })" />
         </label>
-        <button class="te-btn-replace" type="button" @click="replaceInput?.click()">{{ t('replaceImage') }}</button>
-        <input ref="replaceInput" type="file" accept="image/png,image/*" hidden @change="onReplaceFile" />
       </template>
 
       <!-- QR -->
@@ -294,6 +331,7 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 <style scoped>
 .te-mod { display: flex; flex-direction: column; gap: 0.7rem; font-size: 0.85rem; }
 .te-mod-empty { color: var(--te-muted-fg); margin: 0; }
+.te-mod-warn { margin: 0; padding: 0.4rem 0.5rem; border-radius: calc(var(--te-radius) - 2px); font-size: 0.78rem; color: #dc2626; background: color-mix(in srgb, #dc2626 12%, transparent); }
 .te-mod-head { display: flex; align-items: center; justify-content: space-between; }
 .te-mod-type { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; color: var(--te-muted-fg); }
 .te-mod-del { border: 0; background: transparent; cursor: pointer; font-size: 0.9rem; }
