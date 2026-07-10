@@ -462,6 +462,61 @@ fn registered_font_family_is_used_per_element_and_per_doc() {
     );
 }
 
+#[cfg(feature = "bundled-fonts")]
+#[test]
+fn bundled_fonts_render_a_custom_family() {
+    let fonts = Fonts::with_bundled().unwrap();
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HELLO",
+                       "style": { "font": "vt323" } }]
+    }))
+    .unwrap();
+    let out = render_png_with_fonts(&doc, &serde_json::Value::Null, &fonts).unwrap();
+    assert_eq!(&out[0..4], &[0x89, b'P', b'N', b'G']);
+    // A bundled family renders differently from the built-in default.
+    let plain: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HELLO" }]
+    }))
+    .unwrap();
+    assert_ne!(out, render_png(&plain, &serde_json::Value::Null).unwrap());
+}
+
+#[test]
+fn crate_fonts_match_the_editor_copy_byte_for_byte() {
+    // Native (crate) and browser (editor) must draw with the IDENTICAL font bytes
+    // or preview != print. Guard against the two vendored copies drifting. Skipped
+    // when the editor tree isn't present (e.g. a published crate on its own).
+    use std::path::{Path, PathBuf};
+    let crate_dir = Path::new("assets/fonts");
+    let editor_dir = Path::new("../../packages/ticket-editor/src/assets/fonts");
+    if !editor_dir.exists() {
+        return;
+    }
+    fn ttfs(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                ttfs(&p, base, out);
+            } else if p.extension().is_some_and(|x| x == "ttf") {
+                out.push(p.strip_prefix(base).unwrap().to_path_buf());
+            }
+        }
+    }
+    let mut rels = Vec::new();
+    ttfs(crate_dir, crate_dir, &mut rels);
+    assert!(!rels.is_empty(), "no bundled fonts found in the crate");
+    for rel in rels {
+        let a = std::fs::read(crate_dir.join(&rel)).unwrap();
+        let b = std::fs::read(editor_dir.join(&rel)).unwrap_or_default();
+        assert_eq!(
+            a, b,
+            "font drift: {rel:?} differs between the crate and the editor — parity broken"
+        );
+    }
+}
+
 #[test]
 fn adversarial_inputs_do_not_panic() {
     // Absurd decimals must clamp, not overflow/divide-by-zero.

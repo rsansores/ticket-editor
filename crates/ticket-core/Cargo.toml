@@ -19,6 +19,13 @@ qrcodegen = { workspace = true }
 barcoders = { workspace = true }
 base64 = "0.22"
 
+[features]
+# Embed the editor's extra monospace font families into the crate so a backend
+# can render tickets that use them (via `Fonts::with_bundled()`) with the exact
+# same bytes the browser preview uses. Off by default — a backend that only uses
+# the built-in font pays nothing.
+bundled-fonts = []
+
 [dev-dependencies]
 png = { workspace = true }
 base64 = "0.22"

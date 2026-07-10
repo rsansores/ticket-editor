@@ -135,4 +135,45 @@ impl Fonts {
     pub(crate) fn reference(&self) -> &FontVec {
         &self.default.regular
     }
+
+    /// The built-in family plus **every** editor font family, embedded in the
+    /// crate. Requires the `bundled-fonts` feature. Build once and reuse across
+    /// renders (parsing all faces isn't free). This is how a backend renders a
+    /// ticket authored in any editor font with the *exact same bytes* the browser
+    /// preview used — the crate's fonts are a byte-identical copy of the editor's.
+    #[cfg(feature = "bundled-fonts")]
+    pub fn with_bundled() -> Result<Self, ab_glyph::InvalidFont> {
+        let mut fonts = Fonts::builtin()?;
+        macro_rules! bundled {
+            ($($id:literal),* $(,)?) => {$(
+                fonts.add_family(
+                    $id,
+                    FontFaces::from_bytes(
+                        include_bytes!(concat!("../assets/fonts/", $id, "/regular.ttf")).to_vec(),
+                        include_bytes!(concat!("../assets/fonts/", $id, "/bold.ttf")).to_vec(),
+                        include_bytes!(concat!("../assets/fonts/", $id, "/italic.ttf")).to_vec(),
+                        include_bytes!(concat!("../assets/fonts/", $id, "/bold-italic.ttf")).to_vec(),
+                    )?,
+                );
+            )*};
+        }
+        bundled!(
+            "jetbrains-mono",
+            "ibm-plex-mono",
+            "source-code-pro",
+            "fira-mono",
+            "roboto-mono",
+            "inconsolata",
+            "space-mono",
+            "b612-mono",
+            "courier-prime",
+            "cutive-mono",
+            "share-tech-mono",
+            "nova-mono",
+            "syne-mono",
+            "major-mono-display",
+            "vt323",
+        );
+        Ok(fonts)
+    }
 }
