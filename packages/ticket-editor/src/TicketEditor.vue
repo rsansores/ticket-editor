@@ -12,6 +12,7 @@ import ModifierPanel from './components/ModifierPanel.vue'
 import BandPanel from './components/BandPanel.vue'
 import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
+import TypeTag from './components/TypeTag.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
 import { previewComputed } from './composables/useRenderer'
 import { provideEditorI18n, type Messages } from './i18n'
@@ -260,13 +261,6 @@ const varGroups = computed<VarGroup[]>(() => {
   groups.push(...rows)
   return groups
 })
-// The rail's small live value (or a marker) for a calc var.
-function calcPreview(name: string): string {
-  const r = calcReports.value[name]
-  if (!r) return '…'
-  if (r.error) return '⚠'
-  return r.value === '' ? '—' : r.value
-}
 function calcHasError(name: string): boolean {
   return !!calcReports.value[name]?.error
 }
@@ -466,15 +460,17 @@ async function save() {
         </button>
         <div v-if="leftOpen" class="te-rail-inner">
           <h3 class="te-rail-title">{{ t('railVariables') }}</h3>
-          <VariableTree :nodes="tree" @add="addVariable" />
+          <VariableTree :nodes="tree" :types="types" @add="addVariable" />
 
           <div class="te-calc">
             <h3 class="te-rail-title te-calc-title">{{ t('railCalculated') }}</h3>
             <ul v-if="computedVars.length" class="te-calc-list">
               <li v-for="c in computedVars" :key="c.name" class="te-calc-item">
                 <button class="te-calc-add" type="button" :title="c.formula" @click="addCalcElement(c)">
+                  <span class="te-calc-eq" aria-hidden="true">=</span>
                   <span class="te-calc-key">{{ c.name }}</span>
-                  <span class="te-calc-sample" :class="{ 'te-calc-warn': calcHasError(c.name) }">{{ calcPreview(c.name) }}</span>
+                  <span v-if="calcHasError(c.name)" class="te-calc-warn" :title="calcReports[c.name]?.error ?? ''">⚠</span>
+                  <TypeTag v-else class="te-calc-tag" :type="calcKind(c.name)" />
                 </button>
                 <button class="te-calc-icon" type="button" :aria-label="t('calcEdit')" :title="t('calcEdit')" @click="editCalc(c)">✎</button>
                 <button class="te-calc-icon" type="button" :aria-label="t('calcDelete')" :title="t('calcDelete')" @click="removeCalc(c.name)">🗑</button>
@@ -567,9 +563,11 @@ async function save() {
   border: 0; border-radius: calc(var(--te-radius) - 2px); background: transparent; color: inherit; cursor: pointer; text-align: left;
 }
 .te-calc-add:hover { background: var(--te-accent); }
-.te-calc-key { font-weight: 500; font-size: 0.85rem; }
-.te-calc-sample { margin-left: auto; color: var(--te-muted-fg); font-family: ui-monospace, monospace; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 8ch; }
-.te-calc-warn { color: #dc2626; }
+/* calculated fields read as Tableau-style: a leading "=" and the accent colour. */
+.te-calc-eq { color: var(--te-primary); font-family: ui-monospace, monospace; font-weight: 700; font-size: 0.8rem; }
+.te-calc-key { font-weight: 500; font-size: 0.85rem; color: var(--te-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.te-calc-tag { margin-left: auto; }
+.te-calc-warn { margin-left: auto; color: #dc2626; font-size: 0.8rem; }
 .te-calc-icon { border: 0; background: transparent; color: var(--te-muted-fg); cursor: pointer; font-size: 0.75rem; padding: 0.15rem; flex: none; }
 .te-calc-icon:hover { color: inherit; }
 .te-calc-empty { margin: 0 0 0.4rem; color: var(--te-muted-fg); font-size: 0.74rem; line-height: 1.35; }
