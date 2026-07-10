@@ -16,6 +16,8 @@ const props = defineProps<{
   varType?: VariableType
   /** All leaf variables, for the QR "from variable" picker. */
   allVars?: { path: string; key: string }[]
+  /** Printable content width in characters, for the "Fit to width" action. */
+  contentCols?: number
 }>()
 const emit = defineEmits<{ 'update:element': [el: Element]; remove: [id: string] }>()
 
@@ -61,6 +63,16 @@ function patch(p: Partial<Element>) {
 function patchStyle(p: Partial<NonNullable<Element['style']>>) {
   if (!el.value) return
   emit('update:element', { ...el.value, style: { ...el.value.style, ...p } })
+}
+// Stretch a variable's reserved width to fill from its column to the paper's
+// right edge (respecting size magnification). With an alignment set, this is how
+// you make a value span the line — e.g. a right-aligned total.
+function fitWidth() {
+  const e = el.value
+  if (!e || e.type !== 'variable') return
+  const scale = e.style?.scale ?? 1
+  const len = Math.max(1, Math.floor(((props.contentCols ?? 1) - e.col) / scale))
+  patch({ length: len })
 }
 // Turn a static image back into a dynamic one (bytes from a variable). The
 // reverse — file upload — happens in onReplaceFile.
@@ -274,6 +286,7 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
             <span>{{ t('wrap') }}</span>
           </label>
         </div>
+        <button class="te-btn-replace" type="button" :title="t('fitToWidthTip')" @click="fitWidth">⇥ {{ t('fitToWidth') }}</button>
         <div class="te-field">
           <span>{{ t('align') }}</span>
           <div class="te-seg">

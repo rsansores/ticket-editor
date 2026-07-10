@@ -381,21 +381,12 @@ function removeRegion(id: string) {
   if (selectedBandId.value === id) selectedBandId.value = null
 }
 
-// Deliberate, one-click bulk cleanup: pull every off-paper element back inside
-// the printable width. Never runs automatically.
-function fitToWidth() {
+// Printable content width in characters — used by a field's per-element
+// "Fit to width" action in the modifier panel.
+const contentCols = computed(() => {
   const p = doc.value.paper
-  const contentCols = Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
-  doc.value.elements = doc.value.elements.map((el) => {
-    const scale = el.style?.scale ?? 1
-    const chars =
-      el.type === 'variable'
-        ? Math.min(el.length ?? 1, Math.floor(contentCols / scale))
-        : ([...(el.content ?? '')].length || 1)
-    const span = Math.max(1, chars) * scale
-    return { ...el, col: Math.max(0, Math.min(el.col, contentCols - span)) }
-  })
-}
+  return Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
+})
 
 const saving = ref(false)
 async function save() {
@@ -421,7 +412,6 @@ async function save() {
       <button class="te-btn te-btn-ghost" type="button" @click="addImage">{{ t('addImage') }}</button>
       <button class="te-btn te-btn-ghost" type="button" @click="addQr">{{ t('addQr') }}</button>
       <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">{{ t('addBarcode') }}</button>
-      <button class="te-btn te-btn-ghost" type="button" :title="t('fitToWidthTip')" @click="fitToWidth">{{ t('fitToWidth') }}</button>
       <div class="te-spacer" />
       <button v-if="onSave" class="te-btn te-btn-primary" type="button" :disabled="saving" @click="save">
         {{ saving ? t('saving') : t('save') }}
@@ -486,7 +476,7 @@ async function save() {
           <BandPanel v-if="selectedBand" :region="selectedBand" :loop-sources="loopSources"
             :all-vars="allVars" @update:region="updateRegion" @remove="removeRegion" />
           <ModifierPanel v-else :element="selected" :var-type="selectedType" :all-vars="allVars"
-            @update:element="updateElement" @remove="removeElement" />
+            :content-cols="contentCols" @update:element="updateElement" @remove="removeElement" />
         </div>
       </aside>
     </div>
