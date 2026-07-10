@@ -12,6 +12,7 @@ import ModifierPanel from './components/ModifierPanel.vue'
 import BandPanel from './components/BandPanel.vue'
 import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
+import TypeTag from './components/TypeTag.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
 import { previewComputed } from './composables/useRenderer'
 import { provideEditorI18n, type Messages } from './i18n'
@@ -210,6 +211,12 @@ function addQr() {
   doc.value.elements.push(el)
   selectElement(el.id)
 }
+function addBarcode() {
+  const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'barcode',
+    value: '012345678905', from_variable: false, symbology: 'code128', width: 24, height: 4 }
+  doc.value.elements.push(el)
+  selectElement(el.id)
+}
 
 // --- calculated variables ---
 // The one being edited, or null when the dialog is closed. Its `name` doubles as
@@ -260,13 +267,6 @@ const varGroups = computed<VarGroup[]>(() => {
   groups.push(...rows)
   return groups
 })
-// The rail's small live value (or a marker) for a calc var.
-function calcPreview(name: string): string {
-  const r = calcReports.value[name]
-  if (!r) return '…'
-  if (r.error) return '⚠'
-  return r.value === '' ? '—' : r.value
-}
 function calcHasError(name: string): boolean {
   return !!calcReports.value[name]?.error
 }
@@ -317,43 +317,15 @@ function addCalcElement(c: Computed) {
   addVariable({ key: c.name, path: `calc.${c.name}`, sample, type: calcKind(c.name) })
 }
 
-// Image upload → base64 data URI embedded in the doc (self-contained template).
-// Capped: the bytes live inside every persisted/rendered document.
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024
-const uploadError = ref('')
-const fileInput = ref<HTMLInputElement>()
-function pickImage() {
-  fileInput.value?.click()
-}
-function readImage(f: File, onData: (dataUrl: string) => void) {
-  uploadError.value = ''
-  if (!f.type.startsWith('image/')) {
-    uploadError.value = 'Not an image file'
-    return
-  }
-  if (f.size > MAX_IMAGE_BYTES) {
-    uploadError.value = 'Image too large (max 2 MB)'
-    return
-  }
-  const reader = new FileReader()
-  reader.onerror = () => { uploadError.value = 'Could not read the file' }
-  reader.onload = () => {
-    if (typeof reader.result === 'string') onData(reader.result)
-    else uploadError.value = 'Could not read the file'
-  }
-  reader.readAsDataURL(f)
-}
-function onImageFile(e: Event) {
-  const input = e.target as HTMLInputElement
-  const f = input.files?.[0]
-  input.value = '' // allow re-picking the same file
-  if (!f) return
-  readImage(f, (data) => {
-    const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'image',
-      data, w: 16, h: 6, mode: { kind: 'threshold', level: 128 } }
-    doc.value.elements.push(el)
-    selectElement(el.id)
-  })
+// Add a DYNAMIC image: its bytes come from a variable at print time (a signature,
+// a plot, …). This is the default because it's the common case; providing a file
+// in the modifier panel downgrades it to a static, embedded image. No upload
+// dialog on add — an image with no source just shows a placeholder.
+function addImage() {
+  const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'image',
+    data: '', from_variable: true, w: 16, h: 6, mode: { kind: 'threshold', level: 128 } }
+  doc.value.elements.push(el)
+  selectElement(el.id)
 }
 function updateElement(next: Element) {
   const i = doc.value.elements.findIndex((e) => e.id === next.id)
@@ -409,21 +381,12 @@ function removeRegion(id: string) {
   if (selectedBandId.value === id) selectedBandId.value = null
 }
 
-// Deliberate, one-click bulk cleanup: pull every off-paper element back inside
-// the printable width. Never runs automatically.
-function fitToWidth() {
+// Printable content width in characters — used by a field's per-element
+// "Fit to width" action in the modifier panel.
+const contentCols = computed(() => {
   const p = doc.value.paper
-  const contentCols = Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
-  doc.value.elements = doc.value.elements.map((el) => {
-    const scale = el.style?.scale ?? 1
-    const chars =
-      el.type === 'variable'
-        ? Math.min(el.length ?? 1, Math.floor(contentCols / scale))
-        : ([...(el.content ?? '')].length || 1)
-    const span = Math.max(1, chars) * scale
-    return { ...el, col: Math.max(0, Math.min(el.col, contentCols - span)) }
-  })
-}
+  return Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
+})
 
 const saving = ref(false)
 async function save() {
@@ -446,11 +409,9 @@ async function save() {
         <span class="te-muted">{{ zoom.toFixed(1) }}×</span>
       </label>
       <button class="te-btn te-btn-ghost" type="button" @click="addText">{{ t('addText') }}</button>
-      <button class="te-btn te-btn-ghost" type="button" @click="pickImage">{{ t('addImage') }}</button>
+      <button class="te-btn te-btn-ghost" type="button" @click="addImage">{{ t('addImage') }}</button>
       <button class="te-btn te-btn-ghost" type="button" @click="addQr">{{ t('addQr') }}</button>
-      <input ref="fileInput" type="file" accept="image/png,image/*" hidden @change="onImageFile" />
-      <button class="te-btn te-btn-ghost" type="button" :title="t('fitToWidthTip')" @click="fitToWidth">{{ t('fitToWidth') }}</button>
-      <span v-if="uploadError" class="te-upload-err" role="alert">{{ uploadError }}</span>
+      <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">{{ t('addBarcode') }}</button>
       <div class="te-spacer" />
       <button v-if="onSave" class="te-btn te-btn-primary" type="button" :disabled="saving" @click="save">
         {{ saving ? t('saving') : t('save') }}
@@ -466,15 +427,17 @@ async function save() {
         </button>
         <div v-if="leftOpen" class="te-rail-inner">
           <h3 class="te-rail-title">{{ t('railVariables') }}</h3>
-          <VariableTree :nodes="tree" @add="addVariable" />
+          <VariableTree :nodes="tree" :types="types" @add="addVariable" />
 
           <div class="te-calc">
             <h3 class="te-rail-title te-calc-title">{{ t('railCalculated') }}</h3>
             <ul v-if="computedVars.length" class="te-calc-list">
               <li v-for="c in computedVars" :key="c.name" class="te-calc-item">
                 <button class="te-calc-add" type="button" :title="c.formula" @click="addCalcElement(c)">
+                  <span class="te-calc-eq" aria-hidden="true">=</span>
                   <span class="te-calc-key">{{ c.name }}</span>
-                  <span class="te-calc-sample" :class="{ 'te-calc-warn': calcHasError(c.name) }">{{ calcPreview(c.name) }}</span>
+                  <span v-if="calcHasError(c.name)" class="te-calc-warn" :title="calcReports[c.name]?.error ?? ''">⚠</span>
+                  <TypeTag v-else class="te-calc-tag" :type="calcKind(c.name)" />
                 </button>
                 <button class="te-calc-icon" type="button" :aria-label="t('calcEdit')" :title="t('calcEdit')" @click="editCalc(c)">✎</button>
                 <button class="te-calc-icon" type="button" :aria-label="t('calcDelete')" :title="t('calcDelete')" @click="removeCalc(c.name)">🗑</button>
@@ -513,6 +476,7 @@ async function save() {
           <BandPanel v-if="selectedBand" :region="selectedBand" :loop-sources="loopSources"
             :all-vars="allVars" @update:region="updateRegion" @remove="removeRegion" />
           <ModifierPanel v-else :element="selected" :var-type="selectedType" :all-vars="allVars"
+            :loop-sources="loopSources" :content-cols="contentCols"
             @update:element="updateElement" @remove="removeElement" />
         </div>
       </aside>
@@ -556,7 +520,6 @@ async function save() {
 .te-btn-primary:disabled { opacity: 0.6; cursor: default; }
 .te-chip { border: 1px solid var(--te-input); background: var(--te-card); color: var(--te-muted-fg); border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.72rem; cursor: pointer; }
 .te-chip:hover { background: var(--te-accent); }
-.te-upload-err { color: #dc2626; font-size: 0.78rem; }
 /* calculated variables section (left rail) */
 .te-calc { margin-top: 0.9rem; padding-top: 0.6rem; border-top: 1px solid var(--te-border); }
 .te-calc-title { margin-top: 0; }
@@ -567,9 +530,11 @@ async function save() {
   border: 0; border-radius: calc(var(--te-radius) - 2px); background: transparent; color: inherit; cursor: pointer; text-align: left;
 }
 .te-calc-add:hover { background: var(--te-accent); }
-.te-calc-key { font-weight: 500; font-size: 0.85rem; }
-.te-calc-sample { margin-left: auto; color: var(--te-muted-fg); font-family: ui-monospace, monospace; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 8ch; }
-.te-calc-warn { color: #dc2626; }
+/* calculated fields read as Tableau-style: a leading "=" and the accent colour. */
+.te-calc-eq { color: var(--te-primary); font-family: ui-monospace, monospace; font-weight: 700; font-size: 0.8rem; }
+.te-calc-key { font-weight: 500; font-size: 0.85rem; color: var(--te-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.te-calc-tag { margin-left: auto; }
+.te-calc-warn { margin-left: auto; color: #dc2626; font-size: 0.8rem; }
 .te-calc-icon { border: 0; background: transparent; color: var(--te-muted-fg); cursor: pointer; font-size: 0.75rem; padding: 0.15rem; flex: none; }
 .te-calc-icon:hover { color: inherit; }
 .te-calc-empty { margin: 0 0 0.4rem; color: var(--te-muted-fg); font-size: 0.74rem; line-height: 1.35; }

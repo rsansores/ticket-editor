@@ -57,11 +57,15 @@ export interface TextKind {
 /** How a color image is reduced to 1-bit black/white for a thermal printer. */
 export type ImageMode = { kind: 'threshold'; level: number } | { kind: 'dither' }
 
-/** A monochrome logo, base64 PNG, occupying w×h cells. */
+/** A monochrome image occupying w×h cells: a static logo (base64 PNG embedded in
+ *  `data`) or a dynamic image (signature, plot) whose base64 is resolved from a
+ *  variable path when `from_variable` is true. */
 export interface ImageKind {
   type: 'image'
-  /** base64 PNG (with or without a `data:` prefix). */
+  /** base64 PNG (with/without a `data:` prefix), or a variable path when from_variable. */
   data: string
+  /** If true, `data` is a variable path resolved to the base64 at render time. */
+  from_variable?: boolean
   w: number
   h: number
   mode?: ImageMode
@@ -73,6 +77,19 @@ export interface QrKind {
   value: string
   from_variable?: boolean
   size: number
+}
+
+/** A 1D barcode symbology. */
+export type Symbology = 'code128' | 'code39' | 'ean13'
+
+/** A 1D barcode from a variable path or literal, occupying width×height cells. */
+export interface BarcodeKind {
+  type: 'barcode'
+  value: string
+  from_variable?: boolean
+  symbology?: Symbology
+  width: number
+  height: number
 }
 
 /** A value pulled from the variable tree at render time. */
@@ -91,7 +108,7 @@ export interface VariableKind {
   date_format?: string
 }
 
-export type ElementKind = TextKind | VariableKind | ImageKind | QrKind
+export type ElementKind = TextKind | VariableKind | ImageKind | QrKind | BarcodeKind
 
 export interface Element {
   id: string
@@ -101,7 +118,7 @@ export interface Element {
   y_offset?: number
   style?: Style
   // ElementKind is flattened onto the element (serde `#[serde(flatten)]`).
-  type: 'text' | 'variable' | 'image' | 'qr'
+  type: 'text' | 'variable' | 'image' | 'qr' | 'barcode'
   content?: string
   path?: string
   length?: number
@@ -118,6 +135,10 @@ export interface Element {
   value?: string
   from_variable?: boolean
   size?: number
+  // barcode
+  symbology?: Symbology
+  width?: number
+  height?: number
   /** Show only when this holds (hides in place — does not collapse rows). */
   condition?: Condition
 }

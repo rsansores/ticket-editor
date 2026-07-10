@@ -7,7 +7,7 @@
 // Sheet/drawer instead of the inline rail if they prefer.
 import { computed, ref } from 'vue'
 import { useT } from '../i18n'
-import type { Align, Element, NumberFormat, Rounding, VAlign, VariableType } from '../types'
+import type { Align, Element, NumberFormat, Rounding, Symbology, VAlign, VariableType } from '../types'
 
 const t = useT()
 
@@ -16,6 +16,10 @@ const props = defineProps<{
   varType?: VariableType
   /** All leaf variables, for the QR "from variable" picker. */
   allVars?: { path: string; key: string }[]
+  /** Repeatable list paths, so loop-relative fields aren't flagged unavailable. */
+  loopSources?: { path: string; key: string }[]
+  /** Printable content width in characters, for the "Fit to width" action. */
+  contentCols?: number
 }>()
 const emit = defineEmits<{ 'update:element': [el: Element]; remove: [id: string] }>()
 
@@ -34,13 +38,33 @@ function onReplaceFile(e: Event) {
   const reader = new FileReader()
   reader.onload = () => {
     if (typeof reader.result === 'string') {
-      emit('update:element', { ...target, data: reader.result })
+      // Providing a file makes the image static (embedded bytes).
+      emit('update:element', { ...target, data: reader.result, from_variable: false })
     }
   }
   reader.readAsDataURL(f)
 }
 
 const el = computed(() => props.element)
+
+// A reference to a variable that isn't in the current catalog (e.g. an imported
+// design). Surfaced so the user can remove the element or point it elsewhere.
+const knownPaths = computed(() => new Set((props.allVars ?? []).map((v) => v.path)))
+const loopPrefixes = computed(() => (props.loopSources ?? []).map((l) => `${l.path}.`))
+// A loop-relative field (`sale.items.0.qty`) is "known" whenever its list is —
+// even if the sample array is empty, so it isn't derivable from `allVars`.
+function pathKnown(path: string): boolean {
+  return knownPaths.value.has(path) || loopPrefixes.value.some((p) => path.startsWith(p))
+}
+const unavailable = computed(() => {
+  const e = el.value
+  if (!e) return false
+  if (e.type === 'variable') return !!e.path && !pathKnown(e.path)
+  if ((e.type === 'qr' || e.type === 'barcode') && e.from_variable)
+    return !!e.value && !pathKnown(e.value)
+  if (e.type === 'image' && e.from_variable) return !!e.data && !pathKnown(e.data)
+  return false
+})
 
 function patch(p: Partial<Element>) {
   if (!el.value) return
@@ -49,6 +73,30 @@ function patch(p: Partial<Element>) {
 function patchStyle(p: Partial<NonNullable<Element['style']>>) {
   if (!el.value) return
   emit('update:element', { ...el.value, style: { ...el.value.style, ...p } })
+}
+// Stretch a variable's reserved width to fill from its column to the paper's
+// right edge (respecting size magnification). With an alignment set, this is how
+// you make a value span the line — e.g. a right-aligned total.
+function fitWidth() {
+  const e = el.value
+  if (!e || e.type !== 'variable') return
+  const scale = Math.max(1, e.style?.scale ?? 1) // guard a hand-authored scale of 0
+  const len = Math.max(1, Math.floor(((props.contentCols ?? 1) - e.col) / scale))
+  patch({ length: len })
+}
+// Toggle a QR/barcode between a literal and a variable source. Turning ON resets
+// the value to a real variable, so a leftover literal isn't left dangling (and
+// flagged UNAVAILABLE) with the picker showing nothing.
+function toggleFromVariable(on: boolean) {
+  if (!el.value) return
+  const value = on ? (props.allVars?.[0]?.path ?? '') : el.value.value
+  emit('update:element', { ...el.value, from_variable: on, value })
+}
+// Turn a static image back into a dynamic one (bytes from a variable). The
+// reverse — file upload — happens in onReplaceFile.
+function makeDynamic() {
+  if (!el.value) return
+  emit('update:element', { ...el.value, from_variable: true, data: props.allVars?.[0]?.path ?? '' })
 }
 
 const aligns: { v: Align; key: string }[] = [
@@ -99,7 +147,7 @@ const roundings: { v: Rounding; key: string }[] = [
   { v: 'up', key: 'roundUp' },
 ]
 const typeLabels: Record<string, string> = {
-  text: 'typeText', variable: 'typeVariable', image: 'typeImage', qr: 'typeQr',
+  text: 'typeText', variable: 'typeVariable', image: 'typeImage', qr: 'typeQr', barcode: 'typeBarcode',
 }
 const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 </script>
@@ -113,6 +161,8 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
         <button class="te-mod-del" type="button" :title="t('remove')" :aria-label="t('remove')" @click="emit('remove', el.id)">🗑</button>
       </header>
 
+      <p v-if="unavailable" class="te-mod-warn" role="alert">⚠ {{ t('unavailableTip') }}</p>
+
       <label v-if="el.type === 'text'" class="te-field">
         <span>{{ t('fieldText') }}</span>
         <input class="te-input" :value="el.content"
@@ -121,6 +171,25 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 
       <!-- image -->
       <template v-else-if="el.type === 'image'">
+        <!-- Source: dynamic (a variable) by default; uploading a file makes it a
+             static embedded image. One concept, opposite default. -->
+        <template v-if="el.from_variable">
+          <label class="te-field">
+            <span>{{ t('imageVariable') }}</span>
+            <select class="te-input" :value="el.data"
+              @change="patch({ data: ($event.target as HTMLSelectElement).value })">
+              <option value="" disabled>{{ t('imagePickVar') }}</option>
+              <option v-for="v in allVars ?? []" :key="v.path" :value="v.path">{{ v.path }}</option>
+            </select>
+          </label>
+          <button class="te-btn-replace" type="button" @click="replaceInput?.click()">{{ t('imageUseFile') }}</button>
+        </template>
+        <template v-else>
+          <button class="te-btn-replace" type="button" @click="replaceInput?.click()">{{ t('replaceImage') }}</button>
+          <button class="te-btn-replace" type="button" @click="makeDynamic()">{{ t('imageUseVariable') }}</button>
+        </template>
+        <input ref="replaceInput" type="file" accept="image/png,image/*" hidden @change="onReplaceFile" />
+
         <div class="te-field-row">
           <label class="te-half">
             <span>{{ t('widthCells') }}</span>
@@ -148,15 +217,13 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
             :value="el.mode?.kind === 'threshold' ? el.mode.level : 128"
             @input="patch({ mode: { kind: 'threshold', level: +($event.target as HTMLInputElement).value } })" />
         </label>
-        <button class="te-btn-replace" type="button" @click="replaceInput?.click()">{{ t('replaceImage') }}</button>
-        <input ref="replaceInput" type="file" accept="image/png,image/*" hidden @change="onReplaceFile" />
       </template>
 
       <!-- QR -->
       <template v-else-if="el.type === 'qr'">
         <label class="te-check">
           <input type="checkbox" :checked="el.from_variable"
-            @change="patch({ from_variable: ($event.target as HTMLInputElement).checked })" />
+            @change="toggleFromVariable(($event.target as HTMLInputElement).checked)" />
           <span>{{ t('fromVariable') }}</span>
         </label>
         <label v-if="el.from_variable" class="te-field">
@@ -178,6 +245,48 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
         </label>
       </template>
 
+      <!-- barcode -->
+      <template v-else-if="el.type === 'barcode'">
+        <label class="te-check">
+          <input type="checkbox" :checked="el.from_variable"
+            @change="toggleFromVariable(($event.target as HTMLInputElement).checked)" />
+          <span>{{ t('fromVariable') }}</span>
+        </label>
+        <label v-if="el.from_variable" class="te-field">
+          <span>{{ t('fieldVariable') }}</span>
+          <select class="te-input" :value="el.value"
+            @change="patch({ value: ($event.target as HTMLSelectElement).value })">
+            <option v-for="v in allVars ?? []" :key="v.path" :value="v.path">{{ v.path }}</option>
+          </select>
+        </label>
+        <label v-else class="te-field">
+          <span>{{ t('barcodeValue') }}</span>
+          <input class="te-input" :value="el.value"
+            @input="patch({ value: ($event.target as HTMLInputElement).value })" />
+        </label>
+        <label class="te-field">
+          <span>{{ t('symbology') }}</span>
+          <select class="te-input" :value="el.symbology ?? 'code128'"
+            @change="patch({ symbology: ($event.target as HTMLSelectElement).value as Symbology })">
+            <option value="code128">Code 128</option>
+            <option value="code39">Code 39</option>
+            <option value="ean13">EAN-13</option>
+          </select>
+        </label>
+        <div class="te-field-row">
+          <label class="te-half">
+            <span>{{ t('widthCells') }}</span>
+            <input class="te-input" type="number" min="6" max="200" :value="el.width"
+              @input="patch({ width: Math.max(6, +($event.target as HTMLInputElement).value || 6) })" />
+          </label>
+          <label class="te-half">
+            <span>{{ t('heightCells') }}</span>
+            <input class="te-input" type="number" min="1" max="40" :value="el.height"
+              @input="patch({ height: Math.max(1, +($event.target as HTMLInputElement).value || 1) })" />
+          </label>
+        </div>
+      </template>
+
       <!-- variable -->
       <template v-else-if="el.type === 'variable'">
         <label class="te-field">
@@ -195,6 +304,7 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
             <span>{{ t('wrap') }}</span>
           </label>
         </div>
+        <button class="te-btn-replace" type="button" :title="t('fitToWidthTip')" @click="fitWidth">⇥ {{ t('fitToWidth') }}</button>
         <div class="te-field">
           <span>{{ t('align') }}</span>
           <div class="te-seg">
@@ -294,6 +404,7 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 <style scoped>
 .te-mod { display: flex; flex-direction: column; gap: 0.7rem; font-size: 0.85rem; }
 .te-mod-empty { color: var(--te-muted-fg); margin: 0; }
+.te-mod-warn { margin: 0; padding: 0.4rem 0.5rem; border-radius: calc(var(--te-radius) - 2px); font-size: 0.78rem; color: #dc2626; background: color-mix(in srgb, #dc2626 12%, transparent); }
 .te-mod-head { display: flex; align-items: center; justify-content: space-between; }
 .te-mod-type { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; color: var(--te-muted-fg); }
 .te-mod-del { border: 0; background: transparent; cursor: pointer; font-size: 0.9rem; }

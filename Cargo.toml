@@ -19,6 +19,7 @@ serde_json = "1"
 ab_glyph = "0.2"
 png = "0.18"
 qrcodegen = "1.8"
+barcoders = { version = "2", default-features = false }
 
 # Optimize the wasm build for size (applies to the whole workspace release build,
 # which is what `build-wasm.sh` uses for the browser bundle).

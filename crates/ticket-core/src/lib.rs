@@ -32,6 +32,7 @@
 #![deny(clippy::all)]
 #![warn(missing_docs)]
 
+mod barcode;
 mod data;
 mod expr;
 mod font;
@@ -44,7 +45,7 @@ mod schema;
 pub use render::{render_png, RenderError};
 pub use schema::{
     Align, Computed, CondOp, Condition, Element, ElementKind, ImageMode, NumberFormat, Paper,
-    Region, Rounding, Style, TicketDoc, VAlign, SCHEMA_VERSION,
+    Region, Rounding, Style, Symbology, TicketDoc, VAlign, SCHEMA_VERSION,
 };
 
 /// Convenience: render straight from JSON strings (the shape the wasm/HTTP

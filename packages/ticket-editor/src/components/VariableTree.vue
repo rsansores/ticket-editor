@@ -5,11 +5,20 @@
 // later pass but the affordance is visible now.
 import { ref } from 'vue'
 import { useT } from '../i18n'
-import type { VarNode } from '../types'
+import TypeTag from './TypeTag.vue'
+import type { VariableType, VarNode } from '../types'
 
 const t = useT()
-defineProps<{ nodes: VarNode[] }>()
+const props = defineProps<{
+  nodes: VarNode[]
+  /** Resolved path -> type (host declarations win over inference). Drives the tag. */
+  types?: Record<string, VariableType>
+}>()
 const emit = defineEmits<{ add: [node: VarNode] }>()
+
+function typeOf(node: VarNode): VariableType {
+  return (node.path && props.types?.[node.path]) || node.type || 'text'
+}
 
 const collapsed = ref<Set<string>>(new Set())
 function toggle(path: string) {
@@ -33,12 +42,13 @@ function toggle(path: string) {
           v-if="!collapsed.has(node.path)"
           class="te-tree-nested"
           :nodes="node.children"
+          :types="types"
           @add="emit('add', $event)"
         />
       </template>
       <button v-else class="te-tree-leaf" type="button" @click="emit('add', node)">
         <span class="te-tree-key">{{ node.key }}</span>
-        <span v-if="node.sample !== undefined" class="te-tree-sample">{{ node.sample }}</span>
+        <TypeTag class="te-tree-tag" :type="typeOf(node)" />
         <span class="te-tree-plus">＋</span>
       </button>
     </li>
@@ -87,15 +97,8 @@ function toggle(path: string) {
 .te-tree-key {
   font-weight: 500;
 }
-.te-tree-sample {
+.te-tree-tag {
   margin-left: auto;
-  color: var(--te-muted-fg);
-  font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 8ch;
 }
 .te-tree-plus {
   margin-left: 0.35rem;

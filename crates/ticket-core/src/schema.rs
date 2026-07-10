@@ -222,13 +222,22 @@ pub enum ElementKind {
         /// The literal text.
         content: String,
     },
-    /// A monochrome image (logo). Provided as base64 PNG (optionally a
-    /// `data:` URI). Occupies `w × h` character cells; the renderer scales it to
-    /// that pixel box and reduces it to 1-bit black/white the same way the
-    /// printer will — so the preview is exactly what prints.
+    /// A monochrome image (logo, or a dynamic image like a signature or a plot).
+    /// Occupies `w × h` character cells; the renderer scales it to that pixel box
+    /// and reduces it to 1-bit black/white the same way the printer will — so the
+    /// preview is exactly what prints.
     Image {
-        /// base64-encoded PNG bytes (with or without a `data:image/png;base64,` prefix).
+        /// The image source. When `from_variable` is false, this is base64-encoded
+        /// PNG bytes (with or without a `data:image/png;base64,` prefix), embedded
+        /// in the document. When `from_variable` is true, this is a variable path
+        /// resolved at render time to the same base64 string (e.g. a per-sale
+        /// signature the backend supplies). A missing/undecodable source draws a
+        /// placeholder frame rather than failing.
         data: String,
+        /// If true, `data` is a variable path resolved from the data; else the
+        /// base64 image bytes are used directly.
+        #[serde(default)]
+        from_variable: bool,
         /// Width in character cells.
         w: u32,
         /// Height in character cells.
@@ -247,6 +256,22 @@ pub enum ElementKind {
         from_variable: bool,
         /// Side length in character cells.
         size: u32,
+    },
+    /// A 1D (linear) barcode generated from a value (a variable path or a literal
+    /// string). Occupies `width × height` character cells.
+    Barcode {
+        /// Variable path (when `from_variable`) or literal text to encode.
+        value: String,
+        /// If true, `value` is resolved from the data; else used literally.
+        #[serde(default)]
+        from_variable: bool,
+        /// Which barcode symbology to render.
+        #[serde(default)]
+        symbology: Symbology,
+        /// Width in character cells (the bars fill this width).
+        width: u32,
+        /// Height in character cells.
+        height: u32,
     },
     /// A value pulled from the variable tree at render time.
     Variable {
@@ -273,6 +298,19 @@ pub enum ElementKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         date_format: Option<String>,
     },
+}
+
+/// A 1D barcode symbology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Symbology {
+    /// Code 128 — dense, encodes the full printable ASCII range (general default).
+    #[default]
+    Code128,
+    /// Code 39 — alphanumeric, widely supported by older/industrial scanners.
+    Code39,
+    /// EAN-13 — 13-digit retail product codes (12 digits + checksum).
+    Ean13,
 }
 
 /// How a numeric value is rendered.

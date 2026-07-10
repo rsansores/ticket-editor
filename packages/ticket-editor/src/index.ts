@@ -35,5 +35,6 @@ export type {
   VarNode,
   Computed,
   ComputedResult,
+  Symbology,
 } from './types'
 export { SCHEMA_VERSION } from './types'
