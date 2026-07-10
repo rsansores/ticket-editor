@@ -1,5 +1,5 @@
 use serde_json::json;
-use ticket_core::{render_png, RenderError, TicketDoc};
+use ticket_core::{render_png, render_png_with_fonts, FontFaces, Fonts, RenderError, TicketDoc};
 
 fn sample_doc() -> TicketDoc {
     serde_json::from_value(json!({
@@ -397,6 +397,124 @@ fn barcode_from_variable_resolves_and_invalid_falls_back() {
         &render_png(&bad, &serde_json::Value::Null).unwrap()[0..4],
         &[0x89, b'P', b'N', b'G']
     );
+}
+
+#[test]
+fn missing_font_is_a_hard_error() {
+    // A document referencing a font the renderer wasn't given must fail loudly,
+    // not silently substitute — so a backend render surfaces the misconfiguration.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HI",
+                       "style": { "font": "not-registered" } }]
+    }))
+    .unwrap();
+    assert!(matches!(
+        render_png(&doc, &serde_json::Value::Null),
+        Err(RenderError::MissingFont(f)) if f == "not-registered"
+    ));
+}
+
+#[test]
+fn registered_font_family_is_used_per_element_and_per_doc() {
+    // Register an "alt" family whose regular face is actually the bold outlines,
+    // so a field in "alt" renders differently from the built-in regular.
+    let bold = include_bytes!("../assets/DejaVuSansMono-Bold.ttf").to_vec();
+    let mut fonts = Fonts::builtin().unwrap();
+    fonts.add_family(
+        "alt",
+        FontFaces::from_bytes(bold.clone(), bold.clone(), bold.clone(), bold).unwrap(),
+    );
+
+    let doc = |style: serde_json::Value, doc_font: Option<&str>| -> TicketDoc {
+        let mut v = json!({
+            "version": 2, "paper": { "width_chars": 20 },
+            "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HELLO", "style": style }]
+        });
+        if let Some(f) = doc_font {
+            v["font"] = json!(f);
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let default =
+        render_png_with_fonts(&doc(json!({}), None), &serde_json::Value::Null, &fonts).unwrap();
+    let per_el = render_png_with_fonts(
+        &doc(json!({ "font": "alt" }), None),
+        &serde_json::Value::Null,
+        &fonts,
+    )
+    .unwrap();
+    let per_doc = render_png_with_fonts(
+        &doc(json!({}), Some("alt")),
+        &serde_json::Value::Null,
+        &fonts,
+    )
+    .unwrap();
+
+    assert_eq!(&per_el[0..4], &[0x89, b'P', b'N', b'G']);
+    assert_ne!(
+        default, per_el,
+        "a different font family must change the raster"
+    );
+    assert_eq!(
+        per_el, per_doc,
+        "the doc-level default font resolves like a per-element one"
+    );
+}
+
+#[cfg(feature = "bundled-fonts")]
+#[test]
+fn bundled_fonts_render_a_custom_family() {
+    let fonts = Fonts::with_bundled().unwrap();
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HELLO",
+                       "style": { "font": "vt323" } }]
+    }))
+    .unwrap();
+    let out = render_png_with_fonts(&doc, &serde_json::Value::Null, &fonts).unwrap();
+    assert_eq!(&out[0..4], &[0x89, b'P', b'N', b'G']);
+    // A bundled family renders differently from the built-in default.
+    let plain: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20 },
+        "elements": [{ "id": "t", "row": 0, "col": 0, "type": "text", "content": "HELLO" }]
+    }))
+    .unwrap();
+    assert_ne!(out, render_png(&plain, &serde_json::Value::Null).unwrap());
+}
+
+#[test]
+fn crate_fonts_match_the_editor_copy_byte_for_byte() {
+    // Native (crate) and browser (editor) must draw with the IDENTICAL font bytes
+    // or preview != print. Guard against the two vendored copies drifting. Skipped
+    // when the editor tree isn't present (e.g. a published crate on its own).
+    use std::path::{Path, PathBuf};
+    let crate_dir = Path::new("assets/fonts");
+    let editor_dir = Path::new("../../packages/ticket-editor/src/assets/fonts");
+    if !editor_dir.exists() {
+        return;
+    }
+    fn ttfs(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                ttfs(&p, base, out);
+            } else if p.extension().is_some_and(|x| x == "ttf") {
+                out.push(p.strip_prefix(base).unwrap().to_path_buf());
+            }
+        }
+    }
+    let mut rels = Vec::new();
+    ttfs(crate_dir, crate_dir, &mut rels);
+    assert!(!rels.is_empty(), "no bundled fonts found in the crate");
+    for rel in rels {
+        let a = std::fs::read(crate_dir.join(&rel)).unwrap();
+        let b = std::fs::read(editor_dir.join(&rel)).unwrap_or_default();
+        assert_eq!(
+            a, b,
+            "font drift: {rel:?} differs between the crate and the editor — parity broken"
+        );
+    }
 }
 
 #[test]

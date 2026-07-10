@@ -1,9 +1,16 @@
 // Bridge to the wasm renderer — the SAME `ticket-core` code the backend runs.
 // Whatever this draws is byte-for-byte what the printer will produce.
 
-import init, { render_png, schema_version, preview_computed } from '../wasm/ticket_wasm.js'
+import init, {
+  render_png,
+  schema_version,
+  preview_computed,
+  register_font,
+  has_font,
+} from '../wasm/ticket_wasm.js'
 // Vite resolves this to a URL; the .wasm ships as an asset.
 import wasmUrl from '../wasm/ticket_wasm_bg.wasm?url'
+import { loadFontBytes } from '../lib/fonts'
 import type { Computed, ComputedResult, TicketDoc } from '../types'
 
 let ready: Promise<void> | null = null
@@ -23,16 +30,56 @@ function ensureInit(): Promise<void> {
   return ready
 }
 
+// Families already fetched + registered with the wasm renderer this session.
+const loadedFonts = new Set<string>()
+// In-flight loads, so concurrent renders of the same new font share one fetch.
+const inflightFonts = new Map<string, Promise<void>>()
+
+/** Fetch a family's four faces and register them with the renderer (once). */
+function ensureFont(id: string): Promise<void> {
+  if (id === 'mono' || loadedFonts.has(id) || has_font(id)) return Promise.resolve()
+  const existing = inflightFonts.get(id)
+  if (existing) return existing
+  const load = loadFontBytes(id)
+    .then((faces) => {
+      if (!faces) return // unknown family → let the render surface `MissingFont`
+      register_font(id, faces.regular, faces.bold, faces.italic, faces.boldItalic)
+      loadedFonts.add(id)
+    })
+    .finally(() => inflightFonts.delete(id))
+  inflightFonts.set(id, load)
+  return load
+}
+
+/** The font families a document references (doc default + per-element). */
+function fontsUsed(doc: TicketDoc): string[] {
+  const s = new Set<string>()
+  if (doc.font) s.add(doc.font)
+  for (const el of doc.elements) if (el.style?.font) s.add(el.style.font)
+  return [...s]
+}
+
+/**
+ * Ensure every non-built-in font a document uses is fetched and registered
+ * before it renders — so the preview matches the print and the renderer never
+ * hits `MissingFont` for a family the editor knows how to load.
+ */
+export async function ensureFontsLoaded(doc: TicketDoc): Promise<void> {
+  await ensureInit()
+  await Promise.all(fontsUsed(doc).map(ensureFont))
+}
+
 /**
  * Render a document to PNG bytes. `variables` may be omitted to get a preview
- * filled with deterministic fake data.
- * @throws the renderer's error message (bad doc, image too large, …)
+ * filled with deterministic fake data. Lazily loads any fonts the document uses.
+ * @throws the renderer's error message (bad doc, image too large, missing font, …)
  */
 export async function renderPng(
   doc: TicketDoc,
   variables?: unknown,
 ): Promise<Uint8Array> {
   await ensureInit()
+  await ensureFontsLoaded(doc)
   const varsJson = variables == null ? '' : JSON.stringify(variables)
   return render_png(JSON.stringify(doc), varsJson)
 }

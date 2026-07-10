@@ -19,7 +19,7 @@ use ab_glyph::{Font, PxScale, ScaleFont};
 use serde_json::Value;
 
 use crate::data;
-use crate::font::FontSet;
+use crate::font::Fonts;
 use crate::format;
 use crate::image;
 use crate::qr;
@@ -43,6 +43,9 @@ pub enum RenderError {
         /// Pixel height that tripped the limit.
         height: u64,
     },
+    /// The document references a font family the renderer wasn't given. The
+    /// backend must register it (its TTFs) before rendering. Holds the family id.
+    MissingFont(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -52,6 +55,9 @@ impl std::fmt::Display for RenderError {
             RenderError::Png(e) => write!(f, "png encode failed: {e}"),
             RenderError::TooLarge { width, height } => {
                 write!(f, "rendered image too large: {width}x{height}")
+            }
+            RenderError::MissingFont(id) => {
+                write!(f, "renderer has no access to font '{id}'")
             }
         }
     }
@@ -81,6 +87,9 @@ struct Placement {
     bold: bool,
     italic: bool,
     valign: VAlign,
+    /// Resolved monospace family id (`None` → built-in default). `Rc` so an
+    /// element's glyphs share one allocation instead of one per character.
+    font: Option<std::rc::Rc<str>>,
 }
 
 /// A pre-rasterized 1-bit block (logo or QR) to composite onto the canvas.
@@ -94,9 +103,21 @@ struct RasterBlock {
     mask: Vec<bool>,
 }
 
-/// Render a document to PNG bytes.
+/// Render a document to PNG bytes using only the built-in font.
 pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderError> {
-    let fonts = FontSet::load().map_err(|e| RenderError::Font(e.to_string()))?;
+    render_png_with_fonts(doc, variables, Fonts::builtin_shared())
+}
+
+/// Render a document to PNG bytes with a caller-provided font set — the built-in
+/// default plus any families registered via [`Fonts::add_family`] (e.g. from
+/// lazily-loaded TTFs). Fails with [`RenderError::MissingFont`] if the document
+/// references a family the set doesn't contain, so a render never silently
+/// substitutes a font.
+pub fn render_png_with_fonts(
+    doc: &TicketDoc,
+    variables: &Value,
+    fonts: &Fonts,
+) -> Result<Vec<u8>, RenderError> {
     // Evaluate calculated variables once and expose them under `calc.*`, so every
     // downstream resolver (variables, QR-from-variable, conditions, loops) treats
     // them like ordinary data. Skipped entirely when the document has none.
@@ -107,8 +128,8 @@ pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderE
         merged = data::with_computed(variables, &doc.computed);
         &merged
     };
-    let (placements, blocks, total_rows) = lay_out(doc, variables)?;
-    rasterize(doc, &placements, &blocks, total_rows, &fonts)
+    let (placements, blocks, total_rows) = lay_out(doc, variables, fonts)?;
+    rasterize(doc, &placements, &blocks, total_rows, fonts)
 }
 
 /// A region resolved against the data: how many times it renders and how many
@@ -131,6 +152,7 @@ struct RegionPlan<'a> {
 fn lay_out(
     doc: &TicketDoc,
     variables: &Value,
+    fonts: &Fonts,
 ) -> Result<(Vec<Placement>, Vec<RasterBlock>, u32), RenderError> {
     let paper = &doc.paper;
     let content_cols = paper.content_cols();
@@ -328,6 +350,17 @@ fn lay_out(
                 }
                 _ => {
                     let scale = el.style.scale_clamped();
+                    // Resolve this element's font: its own, then the document
+                    // default, then the built-in. Validate up front so a missing
+                    // family fails the whole render rather than drawing blanks.
+                    let family = el.style.font.as_deref().or(doc.font.as_deref());
+                    if let Some(f) = family {
+                        if !fonts.contains(f) {
+                            return Err(RenderError::MissingFont(f.to_string()));
+                        }
+                    }
+                    // One allocation per element; each glyph shares it via `Rc`.
+                    let family: Option<std::rc::Rc<str>> = family.map(std::rc::Rc::from);
                     let display = resolve_display(el, loop_ctx, variables);
                     let lines = fit_lines(el, &display, content_cols, scale);
                     for (li, line) in lines.iter().enumerate() {
@@ -345,6 +378,7 @@ fn lay_out(
                                 bold: el.style.bold,
                                 italic: el.style.italic,
                                 valign: el.style.valign,
+                                font: family.clone(),
                             });
                         }
                     }
@@ -643,7 +677,7 @@ fn rasterize(
     placements: &[Placement],
     blocks: &[RasterBlock],
     total_rows: u32,
-    fonts: &FontSet,
+    fonts: &Fonts,
 ) -> Result<Vec<u8>, RenderError> {
     let paper = &doc.paper;
     let cell_w = paper.cell_width_px.max(1);
@@ -699,7 +733,10 @@ fn rasterize(
         if p.ch == ' ' {
             continue;
         }
-        let face = fonts.face(p.bold, p.italic);
+        // Validated in `lay_out`, so this only errors on a truly corrupt state.
+        let face = fonts
+            .face(p.font.as_deref(), p.bold, p.italic)
+            .map_err(RenderError::MissingFont)?;
         let px_scale = PxScale::from(paper.font_px * p.scale as f32);
         let scaled = face.as_scaled(px_scale);
         let glyph_id = face.glyph_id(p.ch);
@@ -713,7 +750,7 @@ fn rasterize(
         // Center horizontally; sit on a baseline shared by every face at this scale.
         let advance = scaled.h_advance(glyph_id);
         let h_pad = (block_w - advance) / 2.0;
-        let ref_scaled = fonts.regular.as_scaled(px_scale);
+        let ref_scaled = fonts.reference().as_scaled(px_scale);
         let line_height = ref_scaled.ascent() - ref_scaled.descent();
         // Vertical placement of the text line inside the (taller) block.
         let top_pad = match p.valign {

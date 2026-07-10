@@ -29,13 +29,15 @@ export default defineConfig(({ command }) => {
         ? {
             lib: {
               entry: resolve(__dirname, 'src/index.ts'),
-              name: 'TicketEditor',
+              // ES + CJS (NOT UMD): UMD forces a single inlined file, which would
+              // bake every font into the entry. ES/CJS preserve code-split chunks
+              // so each font (and the wasm) is a separate, lazily-fetched file.
+              formats: ['es', 'cjs'],
               fileName: 'ticket-editor',
             },
             rollupOptions: {
               // Vue is provided by the host app — never bundle it.
               external: ['vue', 'vue-i18n'],
-              output: { globals: { vue: 'Vue', 'vue-i18n': 'VueI18n' } },
             },
           }
         : undefined,

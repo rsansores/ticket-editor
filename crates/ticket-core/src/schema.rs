@@ -41,6 +41,10 @@ pub struct TicketDoc {
     /// by path exactly like host-supplied data. Empty for documents that use none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub computed: Vec<Computed>,
+    /// Default monospace font family id for the whole ticket. An element's own
+    /// `style.font` overrides it; `None` here means the built-in `"mono"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
 }
 
 /// A calculated (computed) variable: a named value derived from other variables
@@ -412,6 +416,12 @@ pub struct Style {
     /// Vertical placement of the glyph within its cell block (matters at scale > 1).
     #[serde(default)]
     pub valign: VAlign,
+    /// Monospace font family id for this element (e.g. `"jetbrains-mono"`). `None`
+    /// falls back to the document's default font, then the built-in `"mono"`.
+    /// The family must be available to the renderer or the render fails with
+    /// `MissingFont`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
 }
 
 fn default_scale() -> u8 {
@@ -425,6 +435,7 @@ impl Default for Style {
             italic: false,
             scale: 1,
             valign: VAlign::Middle,
+            font: None,
         }
     }
 }

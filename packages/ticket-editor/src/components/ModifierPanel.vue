@@ -7,6 +7,7 @@
 // Sheet/drawer instead of the inline rail if they prefer.
 import { computed, ref } from 'vue'
 import { useT } from '../i18n'
+import { FONT_OPTIONS } from '../lib/fonts'
 import type { Align, Element, NumberFormat, Rounding, Symbology, VAlign, VariableType } from '../types'
 
 const t = useT()
@@ -73,6 +74,11 @@ function patch(p: Partial<Element>) {
 function patchStyle(p: Partial<NonNullable<Element['style']>>) {
   if (!el.value) return
   emit('update:element', { ...el.value, style: { ...el.value.style, ...p } })
+}
+const fontOptions = FONT_OPTIONS
+// Store `undefined` for the built-in default so a plain document stays clean.
+function setFont(v: string) {
+  patchStyle({ font: v === 'mono' ? undefined : v })
 }
 // Stretch a variable's reserved width to fill from its column to the paper's
 // right edge (respecting size magnification). With an alignment set, this is how
@@ -355,6 +361,13 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 
       <!-- size / vertical align / style apply to text and variables only -->
       <template v-if="el.type === 'text' || el.type === 'variable'">
+        <label class="te-field">
+          <span>{{ t('font') }}</span>
+          <select class="te-input" :value="el.style?.font ?? 'mono'"
+            @change="setFont(($event.target as HTMLSelectElement).value)">
+            <option v-for="f in fontOptions" :key="f.id" :value="f.id">{{ f.label }}</option>
+          </select>
+        </label>
         <div class="te-field">
           <span>{{ t('size') }}</span>
           <div class="te-seg">
