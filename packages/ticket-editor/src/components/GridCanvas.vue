@@ -68,6 +68,11 @@ function computeFp(el: Element): Footprint {
     const rows = Math.max(1, Math.ceil((s * cw.value) / ch.value))
     return { scale: 1, bandChars: s, lines: 1, cols: s, rows }
   }
+  if (el.type === 'barcode') {
+    const w = Math.max(1, el.width ?? 1)
+    const h = Math.max(1, el.height ?? 1)
+    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: h }
+  }
   return footprint(el, contentCols.value, sampleValue(el))
 }
 // Footprints memoized once per render — every layout computed and the O(n²)
@@ -196,7 +201,8 @@ const knownPaths = computed(() => new Set((props.allVars ?? []).map((v) => v.pat
 // remove it or point it at a real variable.
 function isUnavailable(el: Element): boolean {
   if (el.type === 'variable') return !!el.path && !knownPaths.value.has(el.path)
-  if (el.type === 'qr' && el.from_variable) return !!el.value && !knownPaths.value.has(el.value)
+  if ((el.type === 'qr' || el.type === 'barcode') && el.from_variable)
+    return !!el.value && !knownPaths.value.has(el.value)
   if (el.type === 'image' && el.from_variable) return !!el.data && !knownPaths.value.has(el.data)
   return false
 }
@@ -331,7 +337,7 @@ function onPointerUp() {
         :class="{
           selected: el.id === selectedId,
           variable: el.type === 'variable',
-          media: el.type === 'image' || el.type === 'qr',
+          media: el.type === 'image' || el.type === 'qr' || el.type === 'barcode',
           overlap: overlapping.has(el.id),
           offpaper: isOffPaper(el),
           unavailable: isUnavailable(el),
@@ -356,6 +362,7 @@ function onPointerUp() {
         <img v-if="el.type === 'image' && el.data && !el.from_variable" :src="el.data" class="te-el-img" alt="logo" draggable="false" />
         <span v-else-if="el.type === 'image'" class="te-el-ph">{{ isUnavailable(el) ? t('unavailable') : el.from_variable ? '⟳ ' + (el.data ? leaf(el.data) : 'image') : 'image' }}</span>
         <span v-else-if="el.type === 'qr'" class="te-el-ph">▦ QR</span>
+        <span v-else-if="el.type === 'barcode'" class="te-el-ph">{{ isUnavailable(el) ? t('unavailable') : '▏▍▏▍ ' + (el.symbology ?? 'code128') }}</span>
         <span v-else class="te-el-text">{{ label(el) }}</span>
         <span v-if="isUnavailable(el)" class="te-el-badge unavail" :title="t('unavailableTip')">⚠</span>
         <span v-if="el.type === 'variable' && el.wrap" class="te-el-badge wrap" title="Wraps to multiple lines">↩{{ fp(el).lines }}</span>

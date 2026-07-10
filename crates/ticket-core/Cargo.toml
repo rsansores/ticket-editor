@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 ab_glyph = { workspace = true }
 png = { workspace = true }
 qrcodegen = { workspace = true }
+barcoders = { workspace = true }
 base64 = "0.22"
 
 [dev-dependencies]

@@ -257,6 +257,22 @@ pub enum ElementKind {
         /// Side length in character cells.
         size: u32,
     },
+    /// A 1D (linear) barcode generated from a value (a variable path or a literal
+    /// string). Occupies `width × height` character cells.
+    Barcode {
+        /// Variable path (when `from_variable`) or literal text to encode.
+        value: String,
+        /// If true, `value` is resolved from the data; else used literally.
+        #[serde(default)]
+        from_variable: bool,
+        /// Which barcode symbology to render.
+        #[serde(default)]
+        symbology: Symbology,
+        /// Width in character cells (the bars fill this width).
+        width: u32,
+        /// Height in character cells.
+        height: u32,
+    },
     /// A value pulled from the variable tree at render time.
     Variable {
         /// Dotted path into the variables object, e.g. `sale.total_amount`.
@@ -282,6 +298,19 @@ pub enum ElementKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         date_format: Option<String>,
     },
+}
+
+/// A 1D barcode symbology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Symbology {
+    /// Code 128 — dense, encodes the full printable ASCII range (general default).
+    #[default]
+    Code128,
+    /// Code 39 — alphanumeric, widely supported by older/industrial scanners.
+    Code39,
+    /// EAN-13 — 13-digit retail product codes (12 digits + checksum).
+    Ean13,
 }
 
 /// How a numeric value is rendered.

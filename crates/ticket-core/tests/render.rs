@@ -352,6 +352,54 @@ fn computed_conditional_aggregate_totals_by_category() {
 }
 
 #[test]
+fn barcode_renders_and_varies_with_content() {
+    let doc = |val: &str, sym: &str| -> TicketDoc {
+        serde_json::from_value(json!({
+            "version": 2, "paper": { "width_chars": 30 },
+            "elements": [{ "id": "b", "row": 0, "col": 0, "type": "barcode",
+                           "value": val, "symbology": sym, "width": 24, "height": 4 }]
+        }))
+        .unwrap()
+    };
+    let a = render_png(&doc("ABC123", "code128"), &serde_json::Value::Null).unwrap();
+    let b = render_png(&doc("XYZ789", "code128"), &serde_json::Value::Null).unwrap();
+    assert_eq!(&a[0..4], &[0x89, b'P', b'N', b'G']);
+    assert_ne!(
+        a, b,
+        "different barcode content must produce a different image"
+    );
+    // Code 39 and a numeric EAN-13 also render as valid PNGs.
+    let c39 = render_png(&doc("HELLO", "code39"), &serde_json::Value::Null).unwrap();
+    let ean = render_png(&doc("012345678905", "ean13"), &serde_json::Value::Null).unwrap();
+    assert_eq!(&c39[0..4], &[0x89, b'P', b'N', b'G']);
+    assert_eq!(&ean[0..4], &[0x89, b'P', b'N', b'G']);
+}
+
+#[test]
+fn barcode_from_variable_resolves_and_invalid_falls_back() {
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 30 },
+        "elements": [{ "id": "b", "row": 0, "col": 0, "type": "barcode",
+                       "value": "code", "from_variable": true, "symbology": "code128", "width": 24, "height": 4 }]
+    }))
+    .unwrap();
+    let x = render_png(&doc, &json!({ "code": "AAA" })).unwrap();
+    let y = render_png(&doc, &json!({ "code": "BBB" })).unwrap();
+    assert_ne!(x, y, "a barcode bound to a variable must reflect the value");
+    // An EAN-13 with letters can't encode → placeholder frame, not an error.
+    let bad: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 30 },
+        "elements": [{ "id": "b", "row": 0, "col": 0, "type": "barcode",
+                       "value": "not-digits", "symbology": "ean13", "width": 24, "height": 4 }]
+    }))
+    .unwrap();
+    assert_eq!(
+        &render_png(&bad, &serde_json::Value::Null).unwrap()[0..4],
+        &[0x89, b'P', b'N', b'G']
+    );
+}
+
+#[test]
 fn adversarial_inputs_do_not_panic() {
     // Absurd decimals must clamp, not overflow/divide-by-zero.
     let doc: TicketDoc = serde_json::from_value(json!({

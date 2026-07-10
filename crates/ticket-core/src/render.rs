@@ -289,6 +289,43 @@ fn lay_out(
                     });
                     max_bottom = max_bottom.max(base_row + i64::from(rows));
                 }
+                ElementKind::Barcode {
+                    value,
+                    from_variable,
+                    symbology,
+                    width,
+                    height,
+                } => {
+                    let text = if *from_variable {
+                        match data::resolve_loop(loop_ctx, variables, value) {
+                            Some(v) => data::value_to_string(v),
+                            None => data::fake_for(value),
+                        }
+                    } else {
+                        value.clone()
+                    };
+                    let w_px64 = u64::from((*width).max(1)) * cell_w64;
+                    let h_px64 = u64::from((*height).max(1)) * cell_h64;
+                    if w_px64 > MAX_PIXELS || h_px64 > MAX_PIXELS || w_px64 * h_px64 > MAX_PIXELS {
+                        return Err(RenderError::TooLarge {
+                            width: w_px64,
+                            height: h_px64,
+                        });
+                    }
+                    let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
+                    // An unencodable value (e.g. letters in an EAN-13) falls back
+                    // to the visible placeholder frame.
+                    let mask = barcode_mask(&text, *symbology, w_px, h_px)
+                        .unwrap_or_else(|| placeholder_mask(w_px, h_px));
+                    blocks.push(RasterBlock {
+                        x: i64::from(ml + el.col) * i64::from(cell_w),
+                        y: base_row * i64::from(cell_h) + y_off_px as i64,
+                        w: w_px,
+                        h: h_px,
+                        mask,
+                    });
+                    max_bottom = max_bottom.max(base_row + i64::from(*height));
+                }
                 _ => {
                     let scale = el.style.scale_clamped();
                     let display = resolve_display(el, loop_ctx, variables);
@@ -387,6 +424,37 @@ fn lay_out(
 /// Returns `None` when the value can't be encoded (too long) so the caller can
 /// draw a visible placeholder instead of a silent blank. `side` is assumed
 /// already bounded by the caller against `MAX_PIXELS`.
+/// Rasterize a 1D barcode into a `w_px × h_px` mask: each encoded bar becomes a
+/// full-height black column, with a horizontal quiet zone (~10% each side) so a
+/// scanner can lock onto it. `None` if the value can't be encoded.
+fn barcode_mask(
+    value: &str,
+    sym: crate::schema::Symbology,
+    w_px: u32,
+    h_px: u32,
+) -> Option<Vec<bool>> {
+    let bars = crate::barcode::bars(value, sym)?;
+    let n = bars.len();
+    if n == 0 {
+        return None;
+    }
+    let w = w_px.max(1) as usize;
+    let h = h_px.max(1) as usize;
+    let quiet = (n / 10).max(4);
+    let total = n + quiet * 2;
+    let module_px = w as f32 / total as f32;
+    let mut mask = vec![false; w * h];
+    for px in 0..w {
+        let mx = (px as f32 / module_px).floor() as isize - quiet as isize;
+        if mx >= 0 && (mx as usize) < n && bars[mx as usize] {
+            for py in 0..h {
+                mask[py * w + px] = true;
+            }
+        }
+    }
+    Some(mask)
+}
+
 fn qr_mask(text: &str, side: u32) -> Option<Vec<bool>> {
     let (n, m) = qr::matrix(text)?;
     let side = side.max(1) as usize;

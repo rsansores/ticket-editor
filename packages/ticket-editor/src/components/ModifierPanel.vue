@@ -7,7 +7,7 @@
 // Sheet/drawer instead of the inline rail if they prefer.
 import { computed, ref } from 'vue'
 import { useT } from '../i18n'
-import type { Align, Element, NumberFormat, Rounding, VAlign, VariableType } from '../types'
+import type { Align, Element, NumberFormat, Rounding, Symbology, VAlign, VariableType } from '../types'
 
 const t = useT()
 
@@ -117,7 +117,7 @@ const roundings: { v: Rounding; key: string }[] = [
   { v: 'up', key: 'roundUp' },
 ]
 const typeLabels: Record<string, string> = {
-  text: 'typeText', variable: 'typeVariable', image: 'typeImage', qr: 'typeQr',
+  text: 'typeText', variable: 'typeVariable', image: 'typeImage', qr: 'typeQr', barcode: 'typeBarcode',
 }
 const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 </script>
@@ -213,6 +213,48 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
           <input class="te-input" type="number" min="4" max="80" :value="el.size"
             @input="patch({ size: Math.max(4, +($event.target as HTMLInputElement).value || 4) })" />
         </label>
+      </template>
+
+      <!-- barcode -->
+      <template v-else-if="el.type === 'barcode'">
+        <label class="te-check">
+          <input type="checkbox" :checked="el.from_variable"
+            @change="patch({ from_variable: ($event.target as HTMLInputElement).checked })" />
+          <span>{{ t('fromVariable') }}</span>
+        </label>
+        <label v-if="el.from_variable" class="te-field">
+          <span>{{ t('fieldVariable') }}</span>
+          <select class="te-input" :value="el.value"
+            @change="patch({ value: ($event.target as HTMLSelectElement).value })">
+            <option v-for="v in allVars ?? []" :key="v.path" :value="v.path">{{ v.path }}</option>
+          </select>
+        </label>
+        <label v-else class="te-field">
+          <span>{{ t('barcodeValue') }}</span>
+          <input class="te-input" :value="el.value"
+            @input="patch({ value: ($event.target as HTMLInputElement).value })" />
+        </label>
+        <label class="te-field">
+          <span>{{ t('symbology') }}</span>
+          <select class="te-input" :value="el.symbology ?? 'code128'"
+            @change="patch({ symbology: ($event.target as HTMLSelectElement).value as Symbology })">
+            <option value="code128">Code 128</option>
+            <option value="code39">Code 39</option>
+            <option value="ean13">EAN-13</option>
+          </select>
+        </label>
+        <div class="te-field-row">
+          <label class="te-half">
+            <span>{{ t('widthCells') }}</span>
+            <input class="te-input" type="number" min="6" max="200" :value="el.width"
+              @input="patch({ width: Math.max(6, +($event.target as HTMLInputElement).value || 6) })" />
+          </label>
+          <label class="te-half">
+            <span>{{ t('heightCells') }}</span>
+            <input class="te-input" type="number" min="1" max="40" :value="el.height"
+              @input="patch({ height: Math.max(1, +($event.target as HTMLInputElement).value || 1) })" />
+          </label>
+        </div>
       </template>
 
       <!-- variable -->

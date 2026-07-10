@@ -79,6 +79,19 @@ export interface QrKind {
   size: number
 }
 
+/** A 1D barcode symbology. */
+export type Symbology = 'code128' | 'code39' | 'ean13'
+
+/** A 1D barcode from a variable path or literal, occupying width×height cells. */
+export interface BarcodeKind {
+  type: 'barcode'
+  value: string
+  from_variable?: boolean
+  symbology?: Symbology
+  width: number
+  height: number
+}
+
 /** A value pulled from the variable tree at render time. */
 export interface VariableKind {
   type: 'variable'
@@ -95,7 +108,7 @@ export interface VariableKind {
   date_format?: string
 }
 
-export type ElementKind = TextKind | VariableKind | ImageKind | QrKind
+export type ElementKind = TextKind | VariableKind | ImageKind | QrKind | BarcodeKind
 
 export interface Element {
   id: string
@@ -105,7 +118,7 @@ export interface Element {
   y_offset?: number
   style?: Style
   // ElementKind is flattened onto the element (serde `#[serde(flatten)]`).
-  type: 'text' | 'variable' | 'image' | 'qr'
+  type: 'text' | 'variable' | 'image' | 'qr' | 'barcode'
   content?: string
   path?: string
   length?: number
@@ -122,6 +135,10 @@ export interface Element {
   value?: string
   from_variable?: boolean
   size?: number
+  // barcode
+  symbology?: Symbology
+  width?: number
+  height?: number
   /** Show only when this holds (hides in place — does not collapse rows). */
   condition?: Condition
 }

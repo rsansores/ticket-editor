@@ -211,6 +211,12 @@ function addQr() {
   doc.value.elements.push(el)
   selectElement(el.id)
 }
+function addBarcode() {
+  const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'barcode',
+    value: '012345678905', from_variable: false, symbology: 'code128', width: 24, height: 4 }
+  doc.value.elements.push(el)
+  selectElement(el.id)
+}
 
 // --- calculated variables ---
 // The one being edited, or null when the dialog is closed. Its `name` doubles as
@@ -414,6 +420,7 @@ async function save() {
       <button class="te-btn te-btn-ghost" type="button" @click="addText">{{ t('addText') }}</button>
       <button class="te-btn te-btn-ghost" type="button" @click="addImage">{{ t('addImage') }}</button>
       <button class="te-btn te-btn-ghost" type="button" @click="addQr">{{ t('addQr') }}</button>
+      <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">{{ t('addBarcode') }}</button>
       <button class="te-btn te-btn-ghost" type="button" :title="t('fitToWidthTip')" @click="fitToWidth">{{ t('fitToWidth') }}</button>
       <div class="te-spacer" />
       <button v-if="onSave" class="te-btn te-btn-primary" type="button" :disabled="saving" @click="save">
