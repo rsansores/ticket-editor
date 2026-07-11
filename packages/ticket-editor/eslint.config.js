@@ -28,7 +28,7 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      'eqeqeq': ['error', 'smart'],
+      eqeqeq: ['error', 'smart'],
       // Components are file-name/prefix distinct; multi-word rule is noise here.
       'vue/multi-word-component-names': 'off',
       // Purely-stylistic template rules — formatting is not this linter's job

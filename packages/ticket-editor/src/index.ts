@@ -9,7 +9,12 @@ export { default as ComputedEditor } from './components/ComputedEditor.vue'
 
 // Renderer helpers — handy if a host wants to render a saved doc without the UI
 // (e.g. a thumbnail), still through the exact same wasm engine.
-export { renderPng, renderToUrl, rendererSchemaVersion, previewComputed } from './composables/useRenderer'
+export {
+  renderPng,
+  renderToUrl,
+  rendererSchemaVersion,
+  previewComputed,
+} from './composables/useRenderer'
 export { deriveTree, guessLength, randomizeSample, inferType, pathTypeMap } from './lib/tree'
 export { footprint, overlappingIds } from './lib/layout'
 export type { Footprint } from './lib/layout'

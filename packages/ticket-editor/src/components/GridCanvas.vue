@@ -100,9 +100,7 @@ const displayCols = computed(() => {
 const lowestBottom = computed(() =>
   props.doc.elements.reduce((m, e) => Math.max(m, e.row + fp(e).rows), 0),
 )
-const effectiveRows = computed(() =>
-  Math.max(lowestBottom.value, props.doc.paper.min_rows ?? 0, 1),
-)
+const effectiveRows = computed(() => Math.max(lowestBottom.value, props.doc.paper.min_rows ?? 0, 1))
 const displayRows = computed(() => mt.value + effectiveRows.value + mb.value)
 
 const printableRight = computed(() => width.value - mr.value)
@@ -136,7 +134,14 @@ function regionIndex(id: string): number {
   return regionList.value.findIndex((r) => r.id === id) + 1
 }
 const opLabels: Record<string, string> = {
-  is_set: 'is set', is_empty: 'is empty', eq: '=', ne: '≠', gt: '>', lt: '<', gte: '≥', lte: '≤',
+  is_set: 'is set',
+  is_empty: 'is empty',
+  eq: '=',
+  ne: '≠',
+  gt: '>',
+  lt: '<',
+  gte: '≥',
+  lte: '≤',
 }
 function leaf(path: string): string {
   return path.split('.').pop() ?? path
@@ -214,7 +219,7 @@ function isUnavailable(el: Element): boolean {
 }
 function label(el: Element): string {
   if (isUnavailable(el)) return t('unavailable')
-  return el.type === 'variable' ? el.path ?? '' : el.content ?? ''
+  return el.type === 'variable' ? (el.path ?? '') : (el.content ?? '')
 }
 
 // ---- drag (free, snaps to cells, never blocked) ----------------------------
@@ -265,17 +270,31 @@ function onPointerUp() {
             class="te-lane"
             type="button"
             :class="bandCellClass(cr - 1)"
-            :title="regionOf(cr - 1) ? bandLabel(regionOf(cr - 1)!) + ' — ' + t('bandConfigure') : t('bandCreate')"
-            :aria-label="regionOf(cr - 1) ? bandLabel(regionOf(cr - 1)!) + ' — ' + t('bandConfigure') : t('bandCreate')"
+            :title="
+              regionOf(cr - 1)
+                ? bandLabel(regionOf(cr - 1)!) + ' — ' + t('bandConfigure')
+                : t('bandCreate')
+            "
+            :aria-label="
+              regionOf(cr - 1)
+                ? bandLabel(regionOf(cr - 1)!) + ' — ' + t('bandConfigure')
+                : t('bandCreate')
+            "
             @click="onBandCell(cr - 1)"
           >
             <span v-if="isBandStart(cr - 1)" class="te-lane-ico">{{ bandIcon(cr - 1) }}</span>
             <span v-else-if="!regionOf(cr - 1)" class="te-lane-plus">+</span>
           </button>
           <span class="te-gutter-num">{{ cr - 1 }}</span>
-          <button class="te-gutter-btn ins" type="button"
-            :title="t('addLine', { n: cr - 1 })" :aria-label="t('addLine', { n: cr - 1 })"
-            @click="emit('insert-row', cr - 1, effectiveRows)">+</button>
+          <button
+            class="te-gutter-btn ins"
+            type="button"
+            :title="t('addLine', { n: cr - 1 })"
+            :aria-label="t('addLine', { n: cr - 1 })"
+            @click="emit('insert-row', cr - 1, effectiveRows)"
+          >
+            +
+          </button>
           <button
             class="te-gutter-btn del"
             type="button"
@@ -283,7 +302,9 @@ function onPointerUp() {
             :title="isRowEmpty(cr - 1) ? t('removeLine', { n: cr - 1 }) : t('rowNotEmpty')"
             :aria-label="isRowEmpty(cr - 1) ? t('removeLine', { n: cr - 1 }) : t('rowNotEmpty')"
             @click="emit('delete-row', cr - 1, effectiveRows)"
-          >−</button>
+          >
+            −
+          </button>
         </div>
         <!-- append slot: grow the ticket at the end (space for a signature, etc.) -->
         <div
@@ -292,9 +313,15 @@ function onPointerUp() {
         >
           <span class="te-lane" style="cursor: default" />
           <span class="te-gutter-num">end</span>
-          <button class="te-gutter-btn ins" type="button"
-            :title="t('addLineEnd')" :aria-label="t('addLineEnd')"
-            @click="emit('insert-row', effectiveRows, effectiveRows)">+</button>
+          <button
+            class="te-gutter-btn ins"
+            type="button"
+            :title="t('addLineEnd')"
+            :aria-label="t('addLineEnd')"
+            @click="emit('insert-row', effectiveRows, effectiveRows)"
+          >
+            +
+          </button>
         </div>
       </div>
 
@@ -307,74 +334,106 @@ function onPointerUp() {
         }"
         @pointerdown.self="emit('select', null)"
       >
-      <!-- the paper itself (0..width_chars); everything outside is overflow -->
-      <div class="te-paper" :style="{ width: width * cw + 'px', height: '100%' }" />
-      <!-- printable-area guide (inside the margins) -->
-      <div
-        class="te-margin"
-        :style="{
-          left: ml * cw + 'px',
-          top: mt * ch + 'px',
-          width: (width - ml - mr) * cw + 'px',
-          bottom: mb * ch + 'px',
-        }"
-      />
+        <!-- the paper itself (0..width_chars); everything outside is overflow -->
+        <div class="te-paper" :style="{ width: width * cw + 'px', height: '100%' }" />
+        <!-- printable-area guide (inside the margins) -->
+        <div
+          class="te-margin"
+          :style="{
+            left: ml * cw + 'px',
+            top: mt * ch + 'px',
+            width: (width - ml - mr) * cw + 'px',
+            bottom: mb * ch + 'px',
+          }"
+        />
 
-      <!-- flow bands: a subtle row tint (no labels over content); the lane and
+        <!-- flow bands: a subtle row tint (no labels over content); the lane and
            the right drawer carry the details -->
-      <div
-        v-for="r in regionList"
-        :key="r.id"
-        class="te-band"
-        :class="{ loop: !!r.source, cond: !r.source && !!r.condition, selected: r.id === selectedBandId }"
-        :title="bandLabel(r)"
-        :style="{
-          left: ml * cw + 'px',
-          top: (mt + r.start_row) * ch + 'px',
-          width: (width - ml - mr) * cw + 'px',
-          height: (r.end_row - r.start_row) * ch + 'px',
-        }"
-      />
+        <div
+          v-for="r in regionList"
+          :key="r.id"
+          class="te-band"
+          :class="{
+            loop: !!r.source,
+            cond: !r.source && !!r.condition,
+            selected: r.id === selectedBandId,
+          }"
+          :title="bandLabel(r)"
+          :style="{
+            left: ml * cw + 'px',
+            top: (mt + r.start_row) * ch + 'px',
+            width: (width - ml - mr) * cw + 'px',
+            height: (r.end_row - r.start_row) * ch + 'px',
+          }"
+        />
 
-      <div
-        v-for="el in doc.elements"
-        :key="el.id"
-        class="te-el"
-        :class="{
-          selected: el.id === selectedId,
-          variable: el.type === 'variable',
-          media: el.type === 'image' || el.type === 'qr' || el.type === 'barcode',
-          overlap: overlapping.has(el.id),
-          offpaper: isOffPaper(el),
-          unavailable: isUnavailable(el),
-        }"
-        :style="{
-          left: (ml + el.col) * cw + 'px',
-          top: (mt + el.row + (el.y_offset ?? 0)) * ch + 'px',
-          width: fp(el).cols * cw + 'px',
-          height: fp(el).rows * ch + 'px',
-          alignItems:
-            (el.style?.valign ?? 'middle') === 'top'
-              ? 'flex-start'
-              : (el.style?.valign ?? 'middle') === 'bottom'
-                ? 'flex-end'
-                : 'center',
-          fontSize: ch * 0.6 * fp(el).scale + 'px',
-          fontWeight: el.style?.bold ? 700 : 400,
-          fontStyle: el.style?.italic ? 'italic' : 'normal',
-        }"
-        @pointerdown="onPointerDown($event, el)"
-      >
-        <img v-if="el.type === 'image' && el.data && !el.from_variable" :src="el.data" class="te-el-img" alt="logo" draggable="false" />
-        <span v-else-if="el.type === 'image'" class="te-el-ph">{{ isUnavailable(el) ? t('unavailable') : el.from_variable ? '⟳ ' + (el.data ? leaf(el.data) : 'image') : 'image' }}</span>
-        <span v-else-if="el.type === 'qr'" class="te-el-ph">▦ QR</span>
-        <span v-else-if="el.type === 'barcode'" class="te-el-ph">{{ isUnavailable(el) ? t('unavailable') : '▏▍▏▍ ' + (el.symbology ?? 'code128') }}</span>
-        <span v-else class="te-el-text">{{ label(el) }}</span>
-        <span v-if="isUnavailable(el)" class="te-el-badge unavail" :title="t('unavailableTip')">⚠</span>
-        <span v-if="el.type === 'variable' && el.wrap" class="te-el-badge wrap" title="Wraps to multiple lines">↩{{ fp(el).lines }}</span>
-        <span v-if="overlapping.has(el.id)" class="te-el-badge warn" title="Overlaps another element">⚠</span>
-        <span v-if="isOffPaper(el)" class="te-el-badge off" title="Extends past the paper edge">⇥</span>
-      </div>
+        <div
+          v-for="el in doc.elements"
+          :key="el.id"
+          class="te-el"
+          :class="{
+            selected: el.id === selectedId,
+            variable: el.type === 'variable',
+            media: el.type === 'image' || el.type === 'qr' || el.type === 'barcode',
+            overlap: overlapping.has(el.id),
+            offpaper: isOffPaper(el),
+            unavailable: isUnavailable(el),
+          }"
+          :style="{
+            left: (ml + el.col) * cw + 'px',
+            top: (mt + el.row + (el.y_offset ?? 0)) * ch + 'px',
+            width: fp(el).cols * cw + 'px',
+            height: fp(el).rows * ch + 'px',
+            alignItems:
+              (el.style?.valign ?? 'middle') === 'top'
+                ? 'flex-start'
+                : (el.style?.valign ?? 'middle') === 'bottom'
+                  ? 'flex-end'
+                  : 'center',
+            fontSize: ch * 0.6 * fp(el).scale + 'px',
+            fontWeight: el.style?.bold ? 700 : 400,
+            fontStyle: el.style?.italic ? 'italic' : 'normal',
+          }"
+          @pointerdown="onPointerDown($event, el)"
+        >
+          <img
+            v-if="el.type === 'image' && el.data && !el.from_variable"
+            :src="el.data"
+            class="te-el-img"
+            alt="logo"
+            draggable="false"
+          />
+          <span v-else-if="el.type === 'image'" class="te-el-ph">{{
+            isUnavailable(el)
+              ? t('unavailable')
+              : el.from_variable
+                ? '⟳ ' + (el.data ? leaf(el.data) : 'image')
+                : 'image'
+          }}</span>
+          <span v-else-if="el.type === 'qr'" class="te-el-ph">▦ QR</span>
+          <span v-else-if="el.type === 'barcode'" class="te-el-ph">{{
+            isUnavailable(el) ? t('unavailable') : '▏▍▏▍ ' + (el.symbology ?? 'code128')
+          }}</span>
+          <span v-else class="te-el-text">{{ label(el) }}</span>
+          <span v-if="isUnavailable(el)" class="te-el-badge unavail" :title="t('unavailableTip')"
+            >⚠</span
+          >
+          <span
+            v-if="el.type === 'variable' && el.wrap"
+            class="te-el-badge wrap"
+            title="Wraps to multiple lines"
+            >↩{{ fp(el).lines }}</span
+          >
+          <span
+            v-if="overlapping.has(el.id)"
+            class="te-el-badge warn"
+            title="Overlaps another element"
+            >⚠</span
+          >
+          <span v-if="isOffPaper(el)" class="te-el-badge off" title="Extends past the paper edge"
+            >⇥</span
+          >
+        </div>
       </div>
     </div>
   </div>
@@ -518,7 +577,8 @@ function onPointerUp() {
 }
 .te-canvas {
   position: relative;
-  background-image: linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
 }
 .te-paper {

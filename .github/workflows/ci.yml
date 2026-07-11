@@ -1,0 +1,90 @@
+name: CI
+
+# The PR gate: runs on every pull request and on pushes to master, so nothing
+# lands on the default branch unverified. It is ALSO exposed via workflow_call
+# so the Release workflow reuses these EXACT checks instead of duplicating them
+# (single source of truth for "is this code releasable").
+#
+# Third-party actions are pinned to full commit SHAs (immutable), matching the
+# release workflow's supply-chain posture. Dependabot proposes updates.
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_call:
+
+# Least privilege: these jobs only read the repo.
+permissions: {}
+
+# One run per ref; a new push cancels the in-flight run for that ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # Formatting is a hard gate — no "close enough".
+      - name: Format
+        run: cargo fmt --all --check
+      # Whole workspace, all targets (incl. tests/benches), warnings fail the build.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # Whole workspace, so ticket-printable's derive tests run too — not just ticket-core.
+      - name: Test
+        run: cargo test --workspace
+
+  web:
+    name: Web (format, lint, type-check, knip)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # The wasm bindings are generated (not committed) and the type-check
+      # imports them — so build them first, against the current renderer.
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Resolve wasm-bindgen version
+        id: wb
+        # The wasm-bindgen CLI must match the wasm-bindgen crate EXACTLY, so read
+        # the resolved crate version rather than pinning it in two places.
+        run: |
+          v=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+      - name: Build wasm bindings
+        run: ./scripts/build-wasm.sh
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/ticket-editor/pnpm-lock.yaml
+      - name: Editor checks
+        working-directory: packages/ticket-editor
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm format:check
+          pnpm lint
+          pnpm type-check
+          pnpm knip

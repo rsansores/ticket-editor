@@ -106,7 +106,8 @@ const en: MessageTable = {
   // calculated values
   railCalculated: 'Calculated',
   calcAddNew: '＋ New calculated value',
-  calcEmpty: 'None yet. Build a value from your variables — e.g. a maps link, a total, or a per-payment sum.',
+  calcEmpty:
+    'None yet. Build a value from your variables — e.g. a maps link, a total, or a per-payment sum.',
   calcEdit: 'Edit',
   calcDelete: 'Delete',
   calcNewTitle: 'New calculated value',
@@ -249,7 +250,8 @@ const es: MessageTable = {
   condValue: 'valor',
   railCalculated: 'Calculadas',
   calcAddNew: '＋ Nueva variable calculada',
-  calcEmpty: 'Ninguna aún. Crea un valor a partir de tus variables — p. ej. un enlace de mapa, un total o una suma por pago.',
+  calcEmpty:
+    'Ninguna aún. Crea un valor a partir de tus variables — p. ej. un enlace de mapa, un total o una suma por pago.',
   calcEdit: 'Editar',
   calcDelete: 'Eliminar',
   calcNewTitle: 'Nueva variable calculada',
@@ -325,7 +327,10 @@ function mergeMessages(over?: Messages): Messages {
  * Set up translation for the editor tree. Call once from the root component's
  * setup. Returns the `t` function (also provided to descendants via `useT`).
  */
-export function provideEditorI18n(getLocale: () => string | undefined, getMessages: () => Messages | undefined): TFn {
+export function provideEditorI18n(
+  getLocale: () => string | undefined,
+  getMessages: () => Messages | undefined,
+): TFn {
   // Borrow the host's vue-i18n locale ref if a global instance exists.
   let hostLocale: Ref<unknown> | null = null
   try {
@@ -346,8 +351,5 @@ export function provideEditorI18n(getLocale: () => string | undefined, getMessag
 
 /** Inject the editor's `t`. Identity fallback so components render even in isolation. */
 export function useT(): TFn {
-  return inject(
-    I18N_KEY,
-    (k: string) => k,
-  )
+  return inject(I18N_KEY, (k: string) => k)
 }

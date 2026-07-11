@@ -1,0 +1,6 @@
+# Build output and generated code — never format.
+dist
+dist-demo
+src/wasm
+node_modules
+pnpm-lock.yaml

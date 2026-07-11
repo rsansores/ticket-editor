@@ -25,7 +25,9 @@ const ops = computed<{ v: CondOp; label: string; needsValue: boolean }[]>(() => 
   { v: 'gte', label: '≥', needsValue: true },
   { v: 'lte', label: '≤', needsValue: true },
 ])
-const needsValue = computed(() => ops.value.find((o) => o.v === props.modelValue.op)?.needsValue ?? false)
+const needsValue = computed(
+  () => ops.value.find((o) => o.v === props.modelValue.op)?.needsValue ?? false,
+)
 
 function patch(p: Partial<Condition>) {
   emit('update:modelValue', { ...props.modelValue, ...p })
@@ -39,17 +41,28 @@ function setOp(op: CondOp) {
 
 <template>
   <div class="te-cond">
-    <select class="te-input" :value="modelValue.var"
-      @change="patch({ var: ($event.target as HTMLSelectElement).value })">
+    <select
+      class="te-input"
+      :value="modelValue.var"
+      @change="patch({ var: ($event.target as HTMLSelectElement).value })"
+    >
       <option v-for="v in vars" :key="v.path" :value="v.path">{{ v.path }}</option>
     </select>
     <div class="te-cond-row">
-      <select class="te-input" :value="modelValue.op"
-        @change="setOp(($event.target as HTMLSelectElement).value as CondOp)">
+      <select
+        class="te-input"
+        :value="modelValue.op"
+        @change="setOp(($event.target as HTMLSelectElement).value as CondOp)"
+      >
         <option v-for="o in ops" :key="o.v" :value="o.v">{{ o.label }}</option>
       </select>
-      <input v-if="needsValue" class="te-input" :value="modelValue.value ?? ''" :placeholder="t('condValue')"
-        @input="patch({ value: ($event.target as HTMLInputElement).value })" />
+      <input
+        v-if="needsValue"
+        class="te-input"
+        :value="modelValue.value ?? ''"
+        :placeholder="t('condValue')"
+        @input="patch({ value: ($event.target as HTMLInputElement).value })"
+      />
     </div>
   </div>
 </template>

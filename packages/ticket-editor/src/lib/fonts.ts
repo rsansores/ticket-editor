@@ -62,7 +62,11 @@ export async function loadFontBytes(id: string): Promise<FontFaceBytes | null> {
   if (loaders.some((l) => !l)) return null
   const urls = await Promise.all(loaders.map((load) => load()))
   const [regular, bold, italic, boldItalic] = await Promise.all(
-    urls.map((url) => fetch(url).then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b))),
+    urls.map((url) =>
+      fetch(url)
+        .then((r) => r.arrayBuffer())
+        .then((b) => new Uint8Array(b)),
+    ),
   )
   return { regular, bold, italic, boldItalic }
 }

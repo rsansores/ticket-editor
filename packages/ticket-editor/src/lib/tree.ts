@@ -11,7 +11,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** Guess a variable's type from a sample value (fallback when not declared). */
 export function inferType(sample: unknown): VariableType {
   if (typeof sample === 'number') return 'number'
-  if (typeof sample === 'string' && /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2})?/.test(sample)) return 'date'
+  if (typeof sample === 'string' && /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2})?/.test(sample))
+    return 'date'
   return 'text'
 }
 
@@ -71,7 +72,15 @@ export function randomizeSample<T>(data: T): T {
       // Domain-neutral placeholders of varied length (to exercise layout).
       // Kept generic on purpose so reshuffle never injects a theme into a
       // host app's preview — it only reshapes whatever data the host passes.
-      const words = ['Sample', 'Example item', 'Placeholder', 'Value', 'A longer sample value', 'X-100294', 'N/A']
+      const words = [
+        'Sample',
+        'Example item',
+        'Placeholder',
+        'Value',
+        'A longer sample value',
+        'X-100294',
+        'N/A',
+      ]
       return words[rnd(words.length)]
     }
     if (typeof v === 'boolean') return Math.random() > 0.5
