@@ -26,14 +26,7 @@
 
   color: var(--te-fg);
   background: var(--te-bg);
-  font-family: var(
-    --font-sans,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    sans-serif
-  );
+  font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif);
   box-sizing: border-box;
 }
 .te-root *,

@@ -74,10 +74,7 @@ export async function ensureFontsLoaded(doc: TicketDoc): Promise<void> {
  * filled with deterministic fake data. Lazily loads any fonts the document uses.
  * @throws the renderer's error message (bad doc, image too large, missing font, …)
  */
-export async function renderPng(
-  doc: TicketDoc,
-  variables?: unknown,
-): Promise<Uint8Array> {
+export async function renderPng(doc: TicketDoc, variables?: unknown): Promise<Uint8Array> {
   await ensureInit()
   await ensureFontsLoaded(doc)
   const varsJson = variables == null ? '' : JSON.stringify(variables)
@@ -90,10 +87,7 @@ export async function renderPng(
  * **The caller owns the returned URL** and must `URL.revokeObjectURL(url)` when
  * done (e.g. before replacing it), or it leaks one blob per render.
  */
-export async function renderToUrl(
-  doc: TicketDoc,
-  variables?: unknown,
-): Promise<string> {
+export async function renderToUrl(doc: TicketDoc, variables?: unknown): Promise<string> {
   const bytes = await renderPng(doc, variables)
   const blob = new Blob([bytes], { type: 'image/png' })
   return URL.createObjectURL(blob)

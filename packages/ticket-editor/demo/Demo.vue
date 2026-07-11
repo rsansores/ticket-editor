@@ -15,7 +15,8 @@ const variables = {
     discount: 4.62,
     total: 41.62,
     receipt_id: 'A-100294',
-    legend: 'This is not a fiscal receipt. Please keep your ticket for any inquiry about your purchase.',
+    legend:
+      'This is not a fiscal receipt. Please keep your ticket for any inquiry about your purchase.',
     items: [
       { product: 'Dog Food', qty: 2, amount: 24.5 },
       { product: 'Cat Toy', qty: 1, amount: 8.99 },
@@ -36,7 +37,10 @@ const doc = ref<TicketDoc>({
   // Calculated values — small formulas over the variables above. The QR at the
   // bottom points at `calc.maps_link`, and the cut totals sum movements by type.
   computed: [
-    { name: 'maps_link', formula: 'concat("https://maps.google.com/?q=", sale.store.lat, ",", sale.store.lng)' },
+    {
+      name: 'maps_link',
+      formula: 'concat("https://maps.google.com/?q=", sale.store.lat, ",", sale.store.lng)',
+    },
     { name: 'cash_total', formula: 'sumif(sale.movements, payment == "CASH", amount)' },
     { name: 'card_total', formula: 'sumif(sale.movements, payment == "CARD", amount)' },
     { name: 'sales_line', formula: 'concat(count(sale.movements), " payments in the cut")' },
@@ -54,7 +58,12 @@ const doc = ref<TicketDoc>({
   // rows 3..4 loop over items; rows 6..7 show only when there's a discount.
   regions: [
     { id: 'loop', start_row: 3, end_row: 4, source: 'sale.items' },
-    { id: 'disc', start_row: 6, end_row: 7, condition: { var: 'sale.discount', op: 'gt', value: '0' } },
+    {
+      id: 'disc',
+      start_row: 6,
+      end_row: 7,
+      condition: { var: 'sale.discount', op: 'gt', value: '0' },
+    },
   ],
   elements: [
     { id: 'title', row: 0, col: 15, type: 'text', content: 'PET PALACE', style: { bold: true } },
@@ -63,22 +72,71 @@ const doc = ref<TicketDoc>({
     { id: 'h3', row: 2, col: 31, type: 'text', content: 'Amount' },
     // loop band (row 3): item fields
     { id: 'm1', row: 3, col: 0, type: 'variable', path: 'sale.items.0.product', length: 18 },
-    { id: 'm2', row: 3, col: 22, type: 'variable', path: 'sale.items.0.qty', length: 6, align: 'right' },
-    { id: 'm3', row: 3, col: 30, type: 'variable', path: 'sale.items.0.amount', length: 9, align: 'right',
-      number: { decimals: 2, rounding: 'half_up', thousands: true } },
+    {
+      id: 'm2',
+      row: 3,
+      col: 22,
+      type: 'variable',
+      path: 'sale.items.0.qty',
+      length: 6,
+      align: 'right',
+    },
+    {
+      id: 'm3',
+      row: 3,
+      col: 30,
+      type: 'variable',
+      path: 'sale.items.0.amount',
+      length: 9,
+      align: 'right',
+      number: { decimals: 2, rounding: 'half_up', thousands: true },
+    },
     // after the loop — flows below all repetitions
     { id: 'sl', row: 5, col: 0, type: 'text', content: 'SUBTOTAL:' },
-    { id: 'sv', row: 5, col: 28, type: 'variable', path: 'sale.subtotal', length: 11, align: 'right',
-      number: { decimals: 2, rounding: 'half_up', thousands: true } },
+    {
+      id: 'sv',
+      row: 5,
+      col: 28,
+      type: 'variable',
+      path: 'sale.subtotal',
+      length: 11,
+      align: 'right',
+      number: { decimals: 2, rounding: 'half_up', thousands: true },
+    },
     // conditional band (row 6): only if discount > 0
     { id: 'dl', row: 6, col: 0, type: 'text', content: 'DISCOUNT:' },
-    { id: 'dv', row: 6, col: 28, type: 'variable', path: 'sale.discount', length: 11, align: 'right',
-      number: { decimals: 2, rounding: 'half_up', thousands: true } },
+    {
+      id: 'dv',
+      row: 6,
+      col: 28,
+      type: 'variable',
+      path: 'sale.discount',
+      length: 11,
+      align: 'right',
+      number: { decimals: 2, rounding: 'half_up', thousands: true },
+    },
     { id: 'tl', row: 7, col: 0, type: 'text', content: 'TOTAL:', style: { bold: true, scale: 2 } },
-    { id: 'tv', row: 7, col: 20, type: 'variable', path: 'sale.total', length: 19, align: 'right',
-      number: { decimals: 2, rounding: 'half_up', thousands: true }, style: { bold: true, scale: 2 } },
+    {
+      id: 'tv',
+      row: 7,
+      col: 20,
+      type: 'variable',
+      path: 'sale.total',
+      length: 19,
+      align: 'right',
+      number: { decimals: 2, rounding: 'half_up', thousands: true },
+      style: { bold: true, scale: 2 },
+    },
     // QR built from the calculated maps link — scans to the store's location.
-    { id: 'qr', row: 9, col: 13, type: 'qr', value: 'calc.maps_link', from_variable: true, size: 12 },
+    {
+      id: 'qr',
+      row: 9,
+      col: 13,
+      type: 'qr',
+      value: 'calc.maps_link',
+      from_variable: true,
+      size: 12,
+    },
   ],
 })
 
@@ -94,8 +152,12 @@ const variableTypes: Record<string, VariableType> = {
 
 function locBtn(active: boolean) {
   return {
-    padding: '2px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: 'pointer',
-    background: active ? '#4f46e5' : '#fff', color: active ? '#fff' : '#334155',
+    padding: '2px 10px',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e1',
+    cursor: 'pointer',
+    background: active ? '#4f46e5' : '#fff',
+    color: active ? '#fff' : '#334155',
   }
 }
 
@@ -113,7 +175,12 @@ function onSave(d: TicketDoc) {
       <button :style="locBtn(locale === 'es')" @click="locale = 'es'">ES</button>
     </div>
     <div style="flex: 1; min-height: 0">
-      <TicketEditor v-model="doc" :variables="variables" :variable-types="variableTypes" :on-save="onSave" />
+      <TicketEditor
+        v-model="doc"
+        :variables="variables"
+        :variable-types="variableTypes"
+        :on-save="onSave"
+      />
     </div>
   </div>
 </template>
