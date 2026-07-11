@@ -1,13 +1,17 @@
 # Releasing
 
-Two packages ship from this repo, always at the **same version** (the editor's
+Four artifacts ship from this repo, always at the **same version** (the editor's
 wasm is compiled from `ticket-core`, so a version mismatch silently breaks the
 1:1 preview/print parity):
 
 | Package | Registry | Source |
 |---|---|---|
 | `ticket-core` | crates.io | `crates/ticket-core` |
+| `ticket-printable-derive` | crates.io | `crates/ticket-printable-derive` |
+| `ticket-printable` | crates.io | `crates/ticket-printable` (depends on the derive — published after it) |
 | `@ticket-editor/vue` | npm | `packages/ticket-editor` |
+
+(`ticket-wasm` is a build tool — `publish = false` — never published.)
 
 Publishing is automated by [`.github/workflows/release.yml`](.github/workflows/release.yml),
 which uses **OIDC Trusted Publishing** — no npm or crates.io tokens are stored in
@@ -36,9 +40,11 @@ toolchain installed (`rustup target add wasm32-unknown-unknown`,
 `cargo install wasm-bindgen-cli`):
 
 ```bash
-# --- crate ---
+# --- crates (publish the derive BEFORE ticket-printable, which depends on it) ---
 cargo login                       # paste a token from crates.io/settings/tokens
 cargo publish -p ticket-core
+cargo publish -p ticket-printable-derive
+cargo publish -p ticket-printable   # waits for the derive to index, then verifies
 
 # --- npm package ---
 cd packages/ticket-editor

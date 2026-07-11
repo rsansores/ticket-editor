@@ -1,8 +1,9 @@
 name: Release
 
-# Manual, click-to-release. Publishes ticket-core (crates.io) and
-# @ticket-editor/vue (npm) in lockstep, using OIDC Trusted Publishing so NO
-# long-lived registry tokens are ever stored in this repo. The actual publish
+# Manual, click-to-release. Publishes all four artifacts in lockstep —
+# @ticket-editor/vue (npm) and the ticket-core / ticket-printable /
+# ticket-printable-derive crates (crates.io) — using OIDC Trusted Publishing so
+# NO long-lived registry tokens are ever stored in this repo. The actual publish
 # job runs in the protected `release` environment, so it waits for your manual
 # approval before anything is pushed to a registry.
 #
@@ -151,6 +152,37 @@ jobs:
         # Publishes from the version-bumped (uncommitted) tree; dry run only
         # packages + verifies the build.
         run: cargo publish -p ticket-core --allow-dirty ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+
+      # ---- The `ticket-printable` pair. Order matters: the derive macro must be
+      #      published (and indexed — cargo waits automatically) before
+      #      `ticket-printable`'s verify build can resolve it. Each step is
+      #      idempotent: a version already on crates.io is skipped, so a re-run or
+      #      a hand-bootstrapped version never fails the release. ----
+      - name: Publish ticket-printable-derive to crates.io
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            cargo publish -p ticket-printable-derive --allow-dirty --dry-run
+          elif curl -sf "https://index.crates.io/ti/ck/ticket-printable-derive" | grep -q "\"vers\":\"$VERSION\""; then
+            echo "ticket-printable-derive $VERSION already on crates.io — skipping"
+          else
+            cargo publish -p ticket-printable-derive --allow-dirty
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+      - name: Publish ticket-printable to crates.io
+        # --no-verify in a dry run: a brand-new version's derive dep isn't on the
+        # index yet during a dry run, so the verify build can't resolve it. The
+        # real run verifies (the derive was just published in the step above).
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            cargo publish -p ticket-printable --allow-dirty --dry-run --no-verify
+          elif curl -sf "https://index.crates.io/ti/ck/ticket-printable" | grep -q "\"vers\":\"$VERSION\""; then
+            echo "ticket-printable $VERSION already on crates.io — skipping"
+          else
+            cargo publish -p ticket-printable --allow-dirty
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
 
