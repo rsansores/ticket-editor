@@ -97,6 +97,52 @@ pub fn editor_var_types<T: Printable>() -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Implement [`Printable`] as a **text leaf** for one or more types that are
+/// [`Display`](std::fmt::Display) — typically `strum::Display` enums.
+///
+/// `to_value` uses the value's `Display` output; `sample_json` uses the
+/// representative sample you supply (the editor cannot pick one from an open set
+/// of variants); `var_types` reports [`VarType::Text`].
+///
+/// Needs no Cargo feature — it adds no dependency, only requires the type to be
+/// `Display` in the calling crate. It exists so a host does not hand-roll the
+/// same three-method impl for every enum it wants on a ticket.
+///
+/// ```
+/// use std::fmt;
+/// use ticket_printable::Printable;
+///
+/// enum Unit { Liters, Kilograms }
+/// impl fmt::Display for Unit {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         f.write_str(match self { Unit::Liters => "Liters", Unit::Kilograms => "Kilograms" })
+///     }
+/// }
+/// ticket_printable::printable_display!(Unit => "Liters");
+///
+/// assert_eq!(Unit::Kilograms.to_value(), ticket_printable::serde_json::json!("Kilograms"));
+/// assert_eq!(Unit::sample_json(), ticket_printable::serde_json::json!("Liters"));
+/// ```
+#[macro_export]
+macro_rules! printable_display {
+    ($($ty:ty => $sample:expr),* $(,)?) => {$(
+        impl $crate::Printable for $ty {
+            fn to_value(&self) -> $crate::serde_json::Value {
+                $crate::serde_json::Value::String(self.to_string())
+            }
+            fn sample_json() -> $crate::serde_json::Value {
+                $crate::serde_json::Value::String(($sample).to_string())
+            }
+            fn var_types(
+                prefix: &str,
+                out: &mut ::std::collections::BTreeMap<::std::string::String, $crate::VarType>,
+            ) {
+                out.insert(prefix.trim_end_matches('.').to_string(), $crate::VarType::Text);
+            }
+        }
+    )*};
+}
+
 // ---- leaf impls (std, always on) ------------------------------------------
 
 /// Insert a single leaf type at `prefix` with its trailing `.` trimmed.
@@ -282,5 +328,33 @@ mod tests {
         assert!(<Vec<i64>>::sample_json().is_array());
         assert_eq!(Some(3i64).to_value(), serde_json::json!(3));
         assert_eq!(None::<i64>.to_value(), Value::Null);
+    }
+
+    #[test]
+    fn display_macro_makes_a_text_leaf() {
+        enum Unit {
+            Liters,
+            Kilograms,
+        }
+        impl std::fmt::Display for Unit {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(match self {
+                    Unit::Liters => "Liters",
+                    Unit::Kilograms => "Kilograms",
+                })
+            }
+        }
+        printable_display!(Unit => "Liters");
+
+        // Real value is the Display output; sample is the supplied representative.
+        assert_eq!(Unit::Liters.to_value(), Value::String("Liters".into()));
+        assert_eq!(
+            Unit::Kilograms.to_value(),
+            Value::String("Kilograms".into())
+        );
+        assert_eq!(Unit::sample_json(), Value::String("Liters".into()));
+        let mut out = BTreeMap::new();
+        Unit::var_types("m.unit.", &mut out);
+        assert_eq!(out.get("m.unit"), Some(&VarType::Text));
     }
 }
