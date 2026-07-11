@@ -526,7 +526,7 @@ async function save() {
         </button>
         <div v-if="leftOpen" class="te-rail-inner">
           <h3 class="te-rail-title">{{ t('railVariables') }}</h3>
-          <VariableTree :nodes="tree" :types="types" @add="addVariable" />
+          <VariableTree root :nodes="tree" :types="types" @add="addVariable" />
 
           <div class="te-calc">
             <h3 class="te-rail-title te-calc-title">{{ t('railCalculated') }}</h3>
