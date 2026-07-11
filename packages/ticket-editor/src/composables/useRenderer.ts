@@ -8,17 +8,42 @@ import init, {
   register_font,
   has_font,
 } from '../wasm/ticket_wasm.js'
-// Vite resolves this to a URL; the .wasm ships as an asset.
+// In the built library Vite inlines this as a `data:` URL; in dev it's a real
+// URL. See `wasmSource()` below for why we don't just hand it to `init`.
 import wasmUrl from '../wasm/ticket_wasm_bg.wasm?url'
 import { loadFontBytes } from '../lib/fonts'
 import type { Computed, ComputedResult, TicketDoc } from '../types'
 
 let ready: Promise<void> | null = null
 
+/**
+ * The wasm module source to hand `init`.
+ *
+ * Critically, when the wasm is inlined (the built library), we decode the
+ * `data:` URL to bytes and instantiate *those* — we do NOT pass the URL and let
+ * wasm-bindgen `fetch()` it. Passing a URL/fetch makes initialization depend on
+ * the *host* app's bundler resolving and serving that wasm reference, and Vite's
+ * dep pipeline mishandles a wasm URL inside a consumed dependency — the value
+ * reaching `WebAssembly.instantiateStreaming` ends up `undefined`
+ * ("compile … must be a Response"). Raw bytes go straight to
+ * `WebAssembly.instantiate`, with no URL, fetch, or asset handling for any
+ * bundler to break. In dev, `wasmUrl` is a normal URL and passes through.
+ */
+function wasmSource(): Uint8Array | string {
+  if (typeof wasmUrl === 'string' && wasmUrl.startsWith('data:')) {
+    const base64 = wasmUrl.slice(wasmUrl.indexOf(',') + 1)
+    const binary = atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return bytes
+  }
+  return wasmUrl
+}
+
 /** Initialize the wasm module once, lazily. Retries on failure. */
 function ensureInit(): Promise<void> {
   if (!ready) {
-    ready = init({ module_or_path: wasmUrl })
+    ready = init({ module_or_path: wasmSource() })
       .then(() => undefined)
       .catch((e: unknown) => {
         // Don't cache a rejected init (e.g. transient network/CSP failure) —
