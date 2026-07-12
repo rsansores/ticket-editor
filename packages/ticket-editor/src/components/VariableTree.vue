@@ -94,7 +94,7 @@ function toggle(path: string) {
       <button v-else class="te-tree-leaf" type="button" @click="emit('add', node)">
         <span class="te-tree-key">{{ node.key }}</span>
         <TypeTag class="te-tree-tag" :type="typeOf(node)" />
-        <span class="te-tree-plus">＋</span>
+        <span class="te-tree-plus">+</span>
       </button>
     </li>
   </ul>

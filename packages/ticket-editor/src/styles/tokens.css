@@ -26,7 +26,23 @@
 
   color: var(--te-fg);
   background: var(--te-bg);
-  font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  /* Keep the fallbacks OUTSIDE the var(): when a host sets `--font-sans` to a
+     single Latin font (e.g. Inter), `var(--font-sans, a, b)` collapses to just
+     that font with no fallbacks, so any glyph it lacks (arrows, the ⟳/↻ icons,
+     etc.) renders as tofu. Trailing symbol fonts give the browser a per-glyph
+     fallback for our icon characters regardless of the host's text font. */
+  font-family:
+    var(--font-sans, ui-sans-serif),
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'Segoe UI Symbol',
+    'Apple Symbols',
+    'Noto Sans Symbols 2',
+    sans-serif,
+    'Apple Color Emoji',
+    'Segoe UI Emoji',
+    'Noto Color Emoji';
   box-sizing: border-box;
 }
 .te-root *,
