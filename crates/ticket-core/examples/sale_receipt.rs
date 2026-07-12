@@ -44,11 +44,17 @@ fn main() {
             { "id": "tv", "row": 8, "col": 22, "type": "variable", "path": "calc.total", "length": 11, "align": "right",
               "number": { "decimals": 2, "rounding": "half_up", "thousands": true } },
             // #3: a typo'd path — must print EMPTY, not fake
-            { "id": "oops", "row": 9, "col": 0, "type": "variable", "path": "sale.totl", "length": 12 }
+            { "id": "oops", "row": 9, "col": 0, "type": "variable", "path": "sale.totl", "length": 12 },
+            // #5: zero-ink finishing markers — a conditional drawer kick and a
+            // trailing cut, reported with their post-flow rows.
+            { "id": "kick", "row": 10, "col": 0, "type": "marker", "name": "drawer",
+              "condition": { "var": "paid_cash", "op": "eq", "value": "1" } },
+            { "id": "end",  "row": 10, "col": 0, "type": "marker", "name": "cut" }
         ]
     });
     let data = serde_json::json!({
         "customer": "Transportes y Mudanzas del Bajio SA de CV",
+        "paid_cash": 1,
         "wants_invoice": 1,
         "movements": [
             { "volume": 20.5, "price": 24.99 },
@@ -57,9 +63,20 @@ fn main() {
         ]
     });
     let doc: ticket_core::TicketDoc = serde_json::from_value(doc).unwrap();
-    // Backend mode (placeholders off): what actually prints.
-    let png = ticket_core::render_png(&doc, &data).unwrap();
-    std::fs::write(std::env::args().nth(1).unwrap(), png).unwrap();
+    // Backend mode (placeholders off): what actually prints, plus the markers
+    // a print consumer maps to device commands (cut, drawer kick, …).
+    let fonts = ticket_core::Fonts::builtin().unwrap();
+    let out = ticket_core::render(
+        &doc,
+        &data,
+        &fonts,
+        &ticket_core::RenderOptions::default(),
+    )
+    .unwrap();
+    std::fs::write(std::env::args().nth(1).unwrap(), out.png).unwrap();
+    for m in &out.markers {
+        println!("marker: {} @ row {}", m.name, m.row);
+    }
     // Also report unresolved paths — should flag exactly sale.totl.
     println!("unresolved: {:?}", doc.unresolved_paths(&data));
 }

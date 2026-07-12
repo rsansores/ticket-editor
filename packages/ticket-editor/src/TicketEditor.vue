@@ -589,6 +589,14 @@ function collapseRow(id: string) {
 // a plot, …). This is the default because it's the common case; providing a file
 // in the modifier panel downgrades it to a static, embedded image. No upload
 // dialog on add — an image with no source just shows a placeholder.
+// A finishing marker: zero ink, tells the backend where to cut / kick the
+// drawer. Defaults to `cut` at the end of the ticket — the overwhelmingly
+// common case (one receipt = cut at the end).
+function addMarker() {
+  const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'marker', name: 'cut' }
+  doc.value.elements.push(el)
+  selectElement(el.id)
+}
 function addImage() {
   const el: Element = {
     id: newId(),
@@ -661,6 +669,13 @@ function removeRegion(id: string) {
   if (selectedBandId.value === id) selectedBandId.value = null
 }
 
+// Raster width in printer dots. Thermal heads have a fixed native dot width
+// (203 dpi: 384 = 58 mm, 576 = 80 mm); anything else gets scaled by the driver
+// and prints fuzzy. Worth far more than a contrast slider — warn on mismatch.
+const STANDARD_DOT_WIDTHS = [384, 576]
+const dotWidth = computed(() => doc.value.paper.width_chars * (doc.value.paper.cell_width_px ?? 12))
+const dotWidthOk = computed(() => STANDARD_DOT_WIDTHS.includes(dotWidth.value))
+
 // Printable content width in characters — used by a field's per-element
 // "Fit to width" action in the modifier panel.
 const contentCols = computed(() => {
@@ -710,6 +725,16 @@ async function save() {
       <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">
         {{ t('addBarcode') }}
       </button>
+      <button class="te-btn te-btn-ghost" type="button" @click="addMarker">
+        {{ t('addMarker') }}
+      </button>
+      <span
+        v-if="!dotWidthOk"
+        class="te-chip te-chip-warn"
+        :title="t('dotWidthWarnTip', { px: dotWidth })"
+      >
+        {{ t('dotWidthWarn', { px: dotWidth }) }}
+      </span>
       <div class="te-spacer" />
       <button
         v-if="onSave"

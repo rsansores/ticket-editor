@@ -194,6 +194,22 @@ const en: MessageTable = {
   // missing-fields badge
   missingFields: '{n} missing',
   missingFieldsTip: 'Fields not in your sample data — they will print EMPTY on a real ticket:',
+  // markers (finishing actions)
+  addMarker: '+ ✂ Cut / action',
+  typeMarker: 'printer action',
+  markerName: 'Action',
+  markerCut: '✂ Cut the paper',
+  markerFeed: '↓ Feed blank lines',
+  markerBeep: '♪ Beep',
+  markerDrawer: '⊟ Open cash drawer',
+  markerCustom: 'Custom…',
+  markerCustomName: 'Custom action name',
+  markerHint:
+    'Prints nothing. It tells the printer to act at this exact line — if the printer can. A printer without a cutter simply ignores it.',
+  // paper dot-width check
+  dotWidthWarn: '⚠ {px} px',
+  dotWidthWarnTip:
+    'Width × cell width = {px} px, which is not a standard thermal head width (384 = 58 mm, 576 = 80 mm at 203 dpi). The print will be scaled and look fuzzy. Adjust Width or the cell width.',
 }
 
 const es: MessageTable = {
@@ -365,6 +381,20 @@ const es: MessageTable = {
   missingFields: '{n} faltan',
   missingFieldsTip:
     'Campos que no están en tus datos de muestra — se imprimirán VACÍOS en un ticket real:',
+  addMarker: '+ ✂ Corte / acción',
+  typeMarker: 'acción de impresora',
+  markerName: 'Acción',
+  markerCut: '✂ Cortar el papel',
+  markerFeed: '↓ Avanzar líneas en blanco',
+  markerBeep: '♪ Pitido',
+  markerDrawer: '⊟ Abrir el cajón',
+  markerCustom: 'Personalizada…',
+  markerCustomName: 'Nombre de la acción',
+  markerHint:
+    'No imprime nada. Indica a la impresora que actúe en esta línea — si puede. Una impresora sin cortador simplemente lo ignora.',
+  dotWidthWarn: '⚠ {px} px',
+  dotWidthWarnTip:
+    'Ancho × ancho de celda = {px} px, que no es un ancho estándar de cabezal térmico (384 = 58 mm, 576 = 80 mm a 203 dpi). La impresión se escalará y se verá borrosa. Ajusta el ancho o el ancho de celda.',
 }
 
 export const builtinMessages: Messages = { en, es }

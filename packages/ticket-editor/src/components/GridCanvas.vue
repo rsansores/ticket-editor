@@ -57,6 +57,12 @@ function sampleValue(el: Element): string | undefined {
   return resolvePath(props.variables, el.path)
 }
 function computeFp(el: Element): Footprint {
+  if (el.type === 'marker') {
+    // Zero ink on paper; on the canvas it reads as a full-width one-row bar so
+    // it's visible, selectable and draggable like everything else.
+    const w = contentCols.value
+    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: 1 }
+  }
   if (el.type === 'image') {
     const w = Math.max(1, el.w ?? 1)
     const h = Math.max(1, el.h ?? 1)
@@ -104,7 +110,14 @@ const effectiveRows = computed(() => Math.max(lowestBottom.value, props.doc.pape
 const displayRows = computed(() => mt.value + effectiveRows.value + mb.value)
 
 const printableRight = computed(() => width.value - mr.value)
-const overlapping = computed(() => overlappingIds(props.doc.elements, contentCols.value, fp))
+const overlapping = computed(() =>
+  // Markers print nothing, so their full-width canvas bar can't "overlap".
+  overlappingIds(
+    props.doc.elements.filter((e) => e.type !== 'marker'),
+    contentCols.value,
+    fp,
+  ),
+)
 
 // ---- row gutter: insert / remove clean lines -------------------------------
 // Which content rows any element occupies (a scaled/wrapped element spans more
@@ -231,6 +244,7 @@ function isUnavailable(el: Element): boolean {
 }
 function label(el: Element): string {
   if (isUnavailable(el)) return t('unavailable')
+  if (el.type === 'marker') return `✂ ${el.name ?? ''}`
   return el.type === 'variable' ? (el.path ?? '') : (el.content ?? '')
 }
 
@@ -387,8 +401,9 @@ function onPointerUp() {
             selected: el.id === selectedId,
             variable: el.type === 'variable',
             media: el.type === 'image' || el.type === 'qr' || el.type === 'barcode',
+            marker: el.type === 'marker',
             overlap: overlapping.has(el.id),
-            offpaper: isOffPaper(el),
+            offpaper: isOffPaper(el) && el.type !== 'marker',
             unavailable: isUnavailable(el),
           }"
           :style="{
@@ -637,6 +652,21 @@ function onPointerUp() {
   background: color-mix(in srgb, var(--te-primary) 12%, transparent);
   outline: 1px solid color-mix(in srgb, var(--te-primary) 45%, transparent);
   color: var(--te-primary);
+}
+.te-el.marker {
+  align-items: center;
+  justify-content: center;
+  border-top: 2px dashed color-mix(in srgb, var(--te-muted-fg) 55%, transparent);
+  outline: none;
+  background: transparent;
+  color: var(--te-muted-fg);
+  font-size: 0.68rem !important;
+  letter-spacing: 0.06em;
+}
+.te-el.marker .te-el-text {
+  background: var(--te-card);
+  padding: 0 0.4rem;
+  margin: auto;
 }
 .te-el.media {
   align-items: stretch;

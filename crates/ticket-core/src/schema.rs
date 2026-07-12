@@ -108,6 +108,12 @@ pub struct Region {
 /// implicit value always wins deterministically.
 pub const RESERVED_ROW_NAMES: [&str; 5] = ["index", "number", "count", "first", "last"];
 
+/// The standardized [`ElementKind::Marker`] intent names consumers can map
+/// without guessing: paper cut, extra feed, buzzer, cash-drawer kick. Not a
+/// closed set — unknown names pass through and are ignored by consumers that
+/// can't act on them.
+pub const MARKER_NAMES: [&str; 4] = ["cut", "feed", "beep", "drawer"];
+
 /// A simple, non-programmer condition: `<var> <op> [value]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Condition {
@@ -292,6 +298,21 @@ pub enum ElementKind {
         width: u32,
         /// Height in character cells.
         height: u32,
+    },
+    /// A zero-ink finishing marker: pure *intent* (`cut`, `feed`, `beep`,
+    /// `drawer`), reported to the consumer with its resolved absolute row via
+    /// [`crate::render::RenderOutput::markers`]. Renders nothing and occupies
+    /// no cells — only the document knows where a ticket (or a copy) ends, but
+    /// only the print consumer knows which command (if any) its printer
+    /// honors, so the renderer never emits device bytes. Honors `condition`
+    /// and expands inside loop bands like any element (a cut per copy falls
+    /// out for free). Unknown names are not an error: a consumer ignores what
+    /// it can't do.
+    Marker {
+        /// The intent name. `cut` / `feed` / `beep` / `drawer` are the
+        /// standardized set (see [`MARKER_NAMES`]); any other name passes
+        /// through for custom consumers.
+        name: String,
     },
     /// A value pulled from the variable tree at render time.
     Variable {

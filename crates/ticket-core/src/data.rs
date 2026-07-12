@@ -557,7 +557,7 @@ impl TicketDoc {
                         check(&mut out, data);
                     }
                 }
-                ElementKind::Text { .. } => {}
+                ElementKind::Text { .. } | ElementKind::Marker { .. } => {}
             }
             if let Some(c) = &el.condition {
                 if probes_value(c) {

@@ -1209,3 +1209,80 @@ fn max_lines_truncates_with_ellipsis() {
     let two_lines_exact = render_png(&make(Some(2)), &json!({ "x": "aaaa bbbb cccc" })).unwrap();
     assert_ne!(bounded, two_lines_exact);
 }
+
+// ---------------------------------------------------------------------------
+// Markers (finishing actions: cut / feed / beep / drawer)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn markers_report_post_flow_rows_and_leave_no_ink() {
+    use ticket_core::{render, RenderOptions};
+    // A loop (2 design rows collapsed to 1 here) above a trailing cut marker:
+    // the marker's reported row must move with the flow. A marker between
+    // copies sits INSIDE the loop band, so it fires once per iteration.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24, "margin_top_lines": 1, "min_rows": 8 },
+        "regions": [{ "id": "r", "start_row": 1, "end_row": 3, "source": "copies" }],
+        "elements": [
+            { "id": "h", "row": 0, "col": 0, "type": "text", "content": "COPY" },
+            { "id": "b", "row": 1, "col": 0, "type": "variable", "path": "body", "length": 10 },
+            // Cut after each copy's body (second row of the band).
+            { "id": "mid", "row": 2, "col": 0, "type": "marker", "name": "cut" },
+            // Drawer kick at the very end, only when asked.
+            { "id": "kick", "row": 3, "col": 0, "type": "marker", "name": "drawer",
+              "condition": { "var": "kick", "op": "eq", "value": "1" } }
+        ]
+    }))
+    .unwrap();
+    let fonts = &Fonts::builtin().unwrap();
+    let data = json!({ "copies": [ { "body": "a" }, { "body": "b" } ], "kick": 1 });
+    let out = render(&doc, &data, fonts, &RenderOptions::default()).unwrap();
+    // Band rows 1-2 render twice: iterations at rows 2-3 and 4-5 (top margin 1).
+    // Cut = second band row → rows 3 and 5. Drawer at design row 3 + margin 1
+    // + band delta (+2) → row 6. Sorted top-to-bottom.
+    let hits: Vec<(&str, u32)> = out.markers.iter().map(|m| (m.name.as_str(), m.row)).collect();
+    assert_eq!(hits, vec![("cut", 3), ("cut", 5), ("drawer", 6)]);
+
+    // Condition false → the drawer hit disappears; nothing else moves.
+    let no_kick = render(
+        &doc,
+        &json!({ "copies": [ { "body": "a" }, { "body": "b" } ], "kick": 0 }),
+        fonts,
+        &RenderOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(no_kick.markers.len(), 2);
+
+    // Zero ink: the raster is byte-identical to the same doc without markers.
+    let mut bare = doc.clone();
+    bare.elements.retain(|e| !matches!(e.kind, ticket_core::ElementKind::Marker { .. }));
+    let bare_png = render(&bare, &data, fonts, &RenderOptions::default()).unwrap().png;
+    assert_eq!(out.png, bare_png, "markers must contribute no ink");
+}
+
+#[test]
+fn marker_below_content_does_not_grow_the_ticket() {
+    use ticket_core::{render, RenderOptions};
+    let with_marker: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24, "min_rows": 3 },
+        "elements": [
+            { "id": "t", "row": 0, "col": 0, "type": "text", "content": "HI" },
+            { "id": "m", "row": 40, "col": 0, "type": "marker", "name": "cut" }
+        ]
+    }))
+    .unwrap();
+    let fonts = &Fonts::builtin().unwrap();
+    let out = render(&with_marker, &json!({}), fonts, &RenderOptions::default()).unwrap();
+    let h = u32::from_be_bytes([out.png[20], out.png[21], out.png[22], out.png[23]]);
+    // min_rows 3 governs, not the marker's row 40 — but the hit still reports 40.
+    let base: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24, "min_rows": 3 },
+        "elements": [ { "id": "t", "row": 0, "col": 0, "type": "text", "content": "HI" } ]
+    }))
+    .unwrap();
+    let base_out = render(&base, &json!({}), fonts, &RenderOptions::default()).unwrap();
+    let base_h =
+        u32::from_be_bytes([base_out.png[20], base_out.png[21], base_out.png[22], base_out.png[23]]);
+    assert_eq!(h, base_h, "a marker must never lengthen the paper");
+    assert_eq!(out.markers, vec![ticket_core::MarkerHit { name: "cut".into(), row: 40 }]);
+}

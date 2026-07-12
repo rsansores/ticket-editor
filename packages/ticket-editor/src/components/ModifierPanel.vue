@@ -9,6 +9,7 @@ import { computed, ref } from 'vue'
 import ConditionEditor from './ConditionEditor.vue'
 import { useT } from '../i18n'
 import { FONT_OPTIONS } from '../lib/fonts'
+import { MARKER_NAMES } from '../types'
 import type {
   Align,
   Condition,
@@ -194,6 +195,18 @@ const typeLabels: Record<string, string> = {
   image: 'typeImage',
   qr: 'typeQr',
   barcode: 'typeBarcode',
+  marker: 'typeMarker',
+}
+// Marker action picker: the standardized intents plus a custom escape hatch.
+const markerPresets = MARKER_NAMES.map((n) => ({
+  v: n,
+  key: `marker${n[0].toUpperCase()}${n.slice(1)}`,
+}))
+const markerIsPreset = computed(() =>
+  (MARKER_NAMES as readonly string[]).includes(el.value?.name ?? ''),
+)
+function setMarkerAction(v: string) {
+  patch({ name: v === '__custom' ? '' : v })
 }
 const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 
@@ -459,6 +472,30 @@ function toggleCondition(on: boolean) {
             />
           </label>
         </div>
+      </template>
+
+      <!-- marker (finishing action: cut / feed / beep / drawer) -->
+      <template v-else-if="el.type === 'marker'">
+        <label class="te-field">
+          <span>{{ t('markerName') }}</span>
+          <select
+            class="te-input"
+            :value="markerIsPreset ? el.name : '__custom'"
+            @change="setMarkerAction(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="m in markerPresets" :key="m.v" :value="m.v">{{ t(m.key) }}</option>
+            <option value="__custom">{{ t('markerCustom') }}</option>
+          </select>
+        </label>
+        <label v-if="!markerIsPreset" class="te-field">
+          <span>{{ t('markerCustomName') }}</span>
+          <input
+            class="te-input"
+            :value="el.name"
+            @input="patch({ name: ($event.target as HTMLInputElement).value })"
+          />
+        </label>
+        <p class="te-marker-hint">{{ t('markerHint') }}</p>
       </template>
 
       <!-- variable -->
@@ -868,5 +905,11 @@ function toggleCondition(on: boolean) {
 }
 .te-collapse-row {
   align-self: flex-start;
+}
+.te-marker-hint {
+  margin: 0;
+  color: var(--te-muted-fg);
+  font-size: 0.74rem;
+  line-height: 1.4;
 }
 </style>

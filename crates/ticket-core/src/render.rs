@@ -88,6 +88,30 @@ impl RenderOptions {
     }
 }
 
+/// A [`Marker`](crate::schema::ElementKind::Marker) the layout encountered,
+/// with its **absolute, post-flow** row (top margin included, loops expanded,
+/// collapses and wrap shifts applied) — where in the output the consumer
+/// should inject the mapped device command. `row × cell_height_px` is the
+/// pixel y; markers are reported top-to-bottom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkerHit {
+    /// The marker's intent name (`cut`, `feed`, `beep`, `drawer`, or custom).
+    pub name: String,
+    /// Absolute grid row after the flow transform.
+    pub row: u32,
+}
+
+/// Everything a render produces: the raster plus the finishing markers. A
+/// consumer that ignores `markers` behaves exactly like the plain
+/// [`render_png`] path.
+#[derive(Debug, Clone)]
+pub struct RenderOutput {
+    /// The rendered ticket as PNG bytes.
+    pub png: Vec<u8>,
+    /// Finishing markers in top-to-bottom order.
+    pub markers: Vec<MarkerHit>,
+}
+
 /// Hard ceiling on any single raster (the whole canvas, or one logo/QR block),
 /// in pixels (~64 megapixels). Bounds memory against adversarial documents.
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
@@ -150,6 +174,20 @@ pub fn render_png_with_options(
     fonts: &Fonts,
     opts: &RenderOptions,
 ) -> Result<Vec<u8>, RenderError> {
+    Ok(render(doc, variables, fonts, opts)?.png)
+}
+
+/// Render a document to a [`RenderOutput`]: the PNG plus the finishing
+/// markers (cut / feed / beep / drawer) with their resolved absolute rows.
+/// This is the full-fidelity entry point for a print consumer that maps
+/// marker intent to device commands; the `render_png*` family are thin
+/// wrappers that drop the markers.
+pub fn render(
+    doc: &TicketDoc,
+    variables: &Value,
+    fonts: &Fonts,
+    opts: &RenderOptions,
+) -> Result<RenderOutput, RenderError> {
     // Evaluate calculated variables once and expose them under `calc.*`, so every
     // downstream resolver (variables, QR-from-variable, conditions, loops) treats
     // them like ordinary data. Skipped entirely when the document has none.
@@ -160,8 +198,11 @@ pub fn render_png_with_options(
         merged = data::with_computed(variables, &doc.computed);
         &merged
     };
-    let (placements, blocks, total_rows) = lay_out(doc, variables, fonts, opts)?;
-    rasterize(doc, &placements, &blocks, total_rows, fonts)
+    let (placements, blocks, total_rows, mut markers) = lay_out(doc, variables, fonts, opts)?;
+    // Top-to-bottom, then declaration order — deterministic for consumers.
+    markers.sort_by_key(|m| m.row);
+    let png = rasterize(doc, &placements, &blocks, total_rows, fonts)?;
+    Ok(RenderOutput { png, markers })
 }
 
 /// Stage 1: apply the flow transform (loops expand, conditional bands collapse,
@@ -180,7 +221,7 @@ fn lay_out(
     variables: &Value,
     fonts: &Fonts,
     opts: &RenderOptions,
-) -> Result<(Vec<Placement>, Vec<RasterBlock>, u32), RenderError> {
+) -> Result<(Vec<Placement>, Vec<RasterBlock>, u32, Vec<MarkerHit>), RenderError> {
     let paper = &doc.paper;
     let content_cols = paper.content_cols();
     let ml = paper.margin_left_chars;
@@ -218,6 +259,7 @@ fn lay_out(
 
     let mut placements = Vec::new();
     let mut blocks: Vec<RasterBlock> = Vec::new();
+    let mut markers: Vec<MarkerHit> = Vec::new();
     let mut max_bottom: i64 = 0; // lowest content row reached (absolute), exclusive
     // ONE aggregate-row budget for the whole layout: shared across every row
     // formula of every loop iteration (see expr::fresh_budget).
@@ -366,6 +408,18 @@ fn lay_out(
                         mask,
                     });
                     max_bottom = max_bottom.max(base_row + i64::from(*height));
+                    Ok(0)
+                }
+                ElementKind::Marker { name } => {
+                    // Zero ink, zero cells: record the intent at its resolved
+                    // absolute row and move on. Doesn't touch max_bottom — a
+                    // marker never makes the paper longer. Rows above the top
+                    // margin can't happen in practice (y_offset doesn't move
+                    // grid rows); clamp defensively.
+                    markers.push(MarkerHit {
+                        name: name.clone(),
+                        row: base_row.clamp(0, i64::from(u32::MAX)) as u32,
+                    });
                     Ok(0)
                 }
                 _ => {
@@ -543,7 +597,7 @@ fn lay_out(
         });
     }
 
-    Ok((placements, blocks, total_rows_i as u32))
+    Ok((placements, blocks, total_rows_i as u32, markers))
 }
 
 /// A QR matrix scaled into a `side × side` pixel mask with a 4-module quiet zone.
@@ -639,7 +693,7 @@ fn element_references_row(el: &Element) -> bool {
             from_variable,
             ..
         } => *from_variable && is_row(data),
-        ElementKind::Text { .. } => false,
+        ElementKind::Text { .. } | ElementKind::Marker { .. } => false,
     }
 }
 

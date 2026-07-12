@@ -67,6 +67,18 @@ export interface TextKind {
   content: string
 }
 
+/** A zero-ink finishing marker (`cut`, `feed`, `beep`, `drawer`, or custom):
+ *  prints nothing; the backend receives it with its resolved row and maps it
+ *  to the device command its printer actually honors. */
+export interface MarkerKind {
+  type: 'marker'
+  name: string
+}
+
+/** The standardized marker intent names (mirror of Rust `MARKER_NAMES`).
+ *  Unknown names are allowed — consumers ignore what they can't do. */
+export const MARKER_NAMES = ['cut', 'feed', 'beep', 'drawer'] as const
+
 /** How a color image is reduced to 1-bit black/white for a thermal printer. */
 export type ImageMode = { kind: 'threshold'; level: number } | { kind: 'dither' }
 
@@ -125,7 +137,7 @@ export interface VariableKind {
   date_format?: string
 }
 
-export type ElementKind = TextKind | VariableKind | ImageKind | QrKind | BarcodeKind
+export type ElementKind = TextKind | VariableKind | ImageKind | QrKind | BarcodeKind | MarkerKind
 
 export interface Element {
   id: string
@@ -135,8 +147,10 @@ export interface Element {
   y_offset?: number
   style?: Style
   // ElementKind is flattened onto the element (serde `#[serde(flatten)]`).
-  type: 'text' | 'variable' | 'image' | 'qr' | 'barcode'
+  type: 'text' | 'variable' | 'image' | 'qr' | 'barcode' | 'marker'
   content?: string
+  // marker
+  name?: string
   path?: string
   length?: number
   align?: Align

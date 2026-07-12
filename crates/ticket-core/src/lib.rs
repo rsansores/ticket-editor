@@ -44,11 +44,13 @@ mod schema;
 
 pub use font::{FontFaces, Fonts, DEFAULT_FAMILY};
 pub use render::{
-    render_png, render_png_with_fonts, render_png_with_options, RenderError, RenderOptions,
+    render, render_png, render_png_with_fonts, render_png_with_options, MarkerHit, RenderError,
+    RenderOptions, RenderOutput,
 };
 pub use schema::{
     Align, Computed, CondOp, Condition, Element, ElementKind, ImageMode, NumberFormat, Paper,
-    Region, Rounding, Style, Symbology, TicketDoc, VAlign, RESERVED_ROW_NAMES, SCHEMA_VERSION,
+    Region, Rounding, Style, Symbology, TicketDoc, VAlign, MARKER_NAMES, RESERVED_ROW_NAMES,
+    SCHEMA_VERSION,
 };
 
 /// Convenience: render straight from JSON strings (the shape the wasm/HTTP
