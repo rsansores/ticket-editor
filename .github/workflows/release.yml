@@ -148,12 +148,15 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
       - name: Publish ticket-printable to crates.io
-        # --no-verify in a dry run: a brand-new version's derive dep isn't on the
-        # index yet during a dry run, so the verify build can't resolve it. The
-        # real run verifies (the derive was just published in the step above).
+        # Dry run: SKIP. The derive dependency is an exact workspace-lockstep
+        # version (see [workspace.dependencies] in Cargo.toml), and crates.io
+        # strips `path` — so a brand-new version can't even be PACKAGED until
+        # the derive of that same version is on the index. The real run
+        # publishes the derive in the step above, then this resolves and
+        # verifies normally.
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            cargo publish -p ticket-printable --allow-dirty --dry-run --no-verify
+            echo "dry run: skipping ticket-printable — its derive $VERSION isn't on the index yet (published first in a real run)"
           elif curl -sf "https://index.crates.io/ti/ck/ticket-printable" | grep -q "\"vers\":\"$VERSION\""; then
             echo "ticket-printable $VERSION already on crates.io — skipping"
           else
