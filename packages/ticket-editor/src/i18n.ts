@@ -163,6 +163,37 @@ const en: MessageTable = {
   bandConfigure: 'click to configure',
   bandForEach: '↻ for each {name}',
   bandIf: '? if {cond}',
+  // calculated columns (row-scoped, in the band drawer)
+  bandCalcTitle: 'Calculated columns',
+  bandCalcEmpty:
+    'Compute a value per line — e.g. amount = volume × price — and place it as a column.',
+  bandCalcAdd: '+ New calculated column',
+  bandCalcPlace: 'Place on the ticket',
+  rowCalcNewTitle: 'New calculated column',
+  rowCalcEditTitle: 'Edit calculated column',
+  rowCalcLead:
+    'Write a formula from this row\u2019s fields. It is computed for every line of the loop.',
+  rowCalcPreviewNote: 'Preview uses the first row of your sample data.',
+  calcNameReserved: 'This name is built in (row.{name}) — pick another.',
+  calcGroupThisRow: 'This row',
+  calcGroupRowCalcs: 'Calculated columns (earlier ones)',
+  calcGroupLineInfo: 'Line info',
+  rowLineNumber: 'line number (1, 2, …)',
+  rowLineIndex: 'line index (0, 1, …)',
+  rowLineCount: 'how many lines',
+  rowLineFirst: 'is the first line',
+  rowLineLast: 'is the last line',
+  // wrap bound
+  maxLines: 'Max lines',
+  maxLinesTip: 'Cut a very long value after N lines (shows … at the cut). 0 = no limit.',
+  // element condition + collapse-row sugar
+  showOnlyIfEl: '? Show only if (condition)',
+  collapseRow: 'Also collapse the row when hidden',
+  collapseRowTip:
+    'Turns this condition into a one-row band: when hidden, the line disappears instead of leaving a gap.',
+  // missing-fields badge
+  missingFields: '{n} missing',
+  missingFieldsTip: 'Fields not in your sample data — they will print EMPTY on a real ticket:',
 }
 
 const es: MessageTable = {
@@ -306,6 +337,34 @@ const es: MessageTable = {
   bandConfigure: 'clic para configurar',
   bandForEach: '↻ por cada {name}',
   bandIf: '? si {cond}',
+  bandCalcTitle: 'Columnas calculadas',
+  bandCalcEmpty:
+    'Calcula un valor por línea — p. ej. importe = volumen × precio — y colócalo como columna.',
+  bandCalcAdd: '+ Nueva columna calculada',
+  bandCalcPlace: 'Colocar en el ticket',
+  rowCalcNewTitle: 'Nueva columna calculada',
+  rowCalcEditTitle: 'Editar columna calculada',
+  rowCalcLead:
+    'Escribe una fórmula con los campos de la fila. Se calcula para cada línea del bucle.',
+  rowCalcPreviewNote: 'La vista previa usa la primera fila de tus datos de muestra.',
+  calcNameReserved: 'Ese nombre es interno (row.{name}) — elige otro.',
+  calcGroupThisRow: 'Esta fila',
+  calcGroupRowCalcs: 'Columnas calculadas (anteriores)',
+  calcGroupLineInfo: 'Info de línea',
+  rowLineNumber: 'número de línea (1, 2, …)',
+  rowLineIndex: 'índice de línea (0, 1, …)',
+  rowLineCount: 'cuántas líneas hay',
+  rowLineFirst: 'es la primera línea',
+  rowLineLast: 'es la última línea',
+  maxLines: 'Máx. líneas',
+  maxLinesTip: 'Corta un valor muy largo tras N líneas (muestra … al corte). 0 = sin límite.',
+  showOnlyIfEl: '? Mostrar solo si (condición)',
+  collapseRow: 'Además, contraer la fila al ocultarse',
+  collapseRowTip:
+    'Convierte esta condición en una banda de una fila: al ocultarse, la línea desaparece en vez de dejar un hueco.',
+  missingFields: '{n} faltan',
+  missingFieldsTip:
+    'Campos que no están en tus datos de muestra — se imprimirán VACÍOS en un ticket real:',
 }
 
 export const builtinMessages: Messages = { en, es }

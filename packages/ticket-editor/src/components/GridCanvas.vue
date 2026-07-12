@@ -9,7 +9,7 @@
 //     and draggable — nothing is ever hidden or moved on its own;
 //   * overlaps are allowed but clearly flagged, never auto-resolved.
 import { computed, ref } from 'vue'
-import type { Element, Region, TicketDoc } from '../types'
+import { RESERVED_ROW_NAMES, type Element, type Region, type TicketDoc } from '../types'
 import { footprint, overlappingIds, resolvePath, type Footprint } from '../lib/layout'
 import { useT } from '../i18n'
 
@@ -207,14 +207,26 @@ const loopPrefixes = computed(() => (props.loopSources ?? []).map((l) => `${l.pa
 function pathKnown(path: string): boolean {
   return knownPaths.value.has(path) || loopPrefixes.value.some((p) => path.startsWith(p))
 }
+// A `row.<name>` path is valid for an element inside a band that defines that
+// name — a declared calculated column, or (in a loop) an implicit like
+// row.number. Outside its band a row path is genuinely unavailable.
+function rowPathKnown(el: Element, path: string): boolean {
+  if (!path.startsWith('row.')) return false
+  const r = regionOf(el.row)
+  if (!r) return false
+  const name = path.slice('row.'.length)
+  if ((r.computed ?? []).some((c) => c.name === name)) return true
+  return !!r.source && (RESERVED_ROW_NAMES as readonly string[]).includes(name)
+}
 // An element that references a variable NOT in the catalog — e.g. a design
 // imported into a system with different variables. Flagged so the user can
 // remove it or point it at a real variable.
 function isUnavailable(el: Element): boolean {
-  if (el.type === 'variable') return !!el.path && !pathKnown(el.path)
+  const known = (p: string) => pathKnown(p) || rowPathKnown(el, p)
+  if (el.type === 'variable') return !!el.path && !known(el.path)
   if ((el.type === 'qr' || el.type === 'barcode') && el.from_variable)
-    return !!el.value && !pathKnown(el.value)
-  if (el.type === 'image' && el.from_variable) return !!el.data && !pathKnown(el.data)
+    return !!el.value && !known(el.value)
+  if (el.type === 'image' && el.from_variable) return !!el.data && !known(el.data)
   return false
 }
 function label(el: Element): string {

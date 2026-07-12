@@ -100,8 +100,13 @@ export function footprint(el: Element, contentCols: number, value?: string): Foo
     let lines = 1
     if (el.wrap && value != null) {
       lines = Math.max(1, wrapText(value, bandChars).length)
+      if (el.max_lines) lines = Math.min(lines, Math.max(1, el.max_lines))
     }
-    return { scale, bandChars, lines, cols: bandChars * scale, rows: lines * scale }
+    // Design-time footprint is ONE line even when wrapping: the renderer now
+    // reflows content below a wrapped value, so its extra lines never collide
+    // with anything — they insert rows. `lines` still reports the sample's
+    // true line count for the canvas badge.
+    return { scale, bandChars, lines, cols: bandChars * scale, rows: scale }
   }
 
   // Static text: single line, no reserved width; may run into the overflow zone.

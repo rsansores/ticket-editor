@@ -30,7 +30,17 @@ export interface Region {
   end_row: number
   source?: string
   condition?: Condition
+  /** Row-scoped formulas, evaluated once per loop iteration; values land under
+   *  `row.<name>` for elements inside this band (e.g. `importe = volume * price`).
+   *  Looping bands also expose the implicit `row.index` / `row.number` /
+   *  `row.count` / `row.first` / `row.last` without declaring anything. */
+  computed?: Computed[]
 }
+
+/** `row.*` names every looping band provides implicitly — reserved, so a
+ *  declared calculated column may not use them. Mirror of the Rust
+ *  `RESERVED_ROW_NAMES`. */
+export const RESERVED_ROW_NAMES = ['index', 'number', 'count', 'first', 'last'] as const
 
 export interface Style {
   bold?: boolean
@@ -103,8 +113,12 @@ export interface VariableKind {
   /** Reserved width in characters; the value is truncated/padded to this. */
   length: number
   align?: Align
-  /** Flow long values across multiple lines instead of truncating. */
+  /** Flow long values across multiple lines instead of truncating. Content
+   *  below moves down to make room. */
   wrap?: boolean
+  /** With `wrap`, keep at most this many lines (a longer value is cut with a
+   *  trailing `…`). Unset = unbounded. */
+  max_lines?: number
   /** Numeric formatting (mutually exclusive with dateFormat). */
   number?: NumberFormat
   /** Date reshaping pattern, e.g. `DD/MM/YYYY HH:mm`. */
@@ -127,6 +141,7 @@ export interface Element {
   length?: number
   align?: Align
   wrap?: boolean
+  max_lines?: number
   number?: NumberFormat
   date_format?: string
   // image

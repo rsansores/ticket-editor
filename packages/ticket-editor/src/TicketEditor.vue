@@ -14,9 +14,9 @@ import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
 import TypeTag from './components/TypeTag.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
-import { previewComputed } from './composables/useRenderer'
+import { previewComputed, previewRowComputed, unresolvedPaths } from './composables/useRenderer'
 import { provideEditorI18n, type Messages } from './i18n'
-import { SCHEMA_VERSION } from './types'
+import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
   Computed,
   ComputedResult,
@@ -375,6 +375,207 @@ function addCalcElement(c: Computed) {
   addVariable({ key: c.name, path: `calc.${c.name}`, sample, type: calcKind(c.name) })
 }
 
+// --- calculated columns (row-scoped, live on a band) -----------------------
+// The column being edited: which band it belongs to plus the draft value. The
+// same ComputedEditor dialog is reused with variant="row" — no new mental model.
+const editingRowCalc = ref<{ regionId: string; calc: Computed } | null>(null)
+function regionById(id: string): Region | undefined {
+  return (doc.value.regions ?? []).find((r) => r.id === id)
+}
+function editRowCalc(regionId: string, calc: Computed | null) {
+  editingRowCalc.value = {
+    regionId,
+    calc: calc ? (JSON.parse(JSON.stringify(calc)) as Computed) : { name: '', formula: '' },
+  }
+}
+function saveRowCalc(next: Computed) {
+  const ctx = editingRowCalc.value
+  editingRowCalc.value = null
+  if (!ctx) return
+  const region = regionById(ctx.regionId)
+  if (!region) return
+  const list = [...(region.computed ?? [])]
+  const orig = ctx.calc.name // renames keep their position
+  const i = orig ? list.findIndex((c) => c.name === orig) : -1
+  if (i >= 0) list[i] = next
+  else list.push(next)
+  updateRegion({ ...region, computed: list })
+}
+function removeRowCalc(regionId: string, name: string) {
+  const region = regionById(regionId)
+  if (!region) return
+  const list = (region.computed ?? []).filter((c) => c.name !== name)
+  updateRegion({ ...region, computed: list.length ? list : undefined })
+}
+// Live first-row results per band, keyed regionId → name → result. Drives the
+// value chips in the band drawer and the default formatting when placed.
+const rowCalcReports = ref<Record<string, Record<string, ComputedResult>>>({})
+watch(
+  [() => doc.value.regions, previewData],
+  async () => {
+    const out: Record<string, Record<string, ComputedResult>> = {}
+    for (const r of doc.value.regions ?? []) {
+      if (!r.computed?.length) continue
+      try {
+        const rep = await previewRowComputed(
+          snapshot(doc.value),
+          r.id,
+          r.computed,
+          previewData.value ?? {},
+        )
+        out[r.id] = Object.fromEntries(rep.map((x) => [x.name, x]))
+      } catch {
+        // engine unavailable → no chips, the preview pane surfaces the error
+      }
+    }
+    rowCalcReports.value = out
+  },
+  { immediate: true, deep: true },
+)
+// Evaluate a DRAFT row formula in its real position within the band's list
+// (same replace-in-place trick as previewFormula) against the first data row.
+async function previewRowFormula(formula: string): Promise<ComputedResult> {
+  const ctx = editingRowCalc.value
+  if (!ctx) return { name: '', value: '', kind: 'empty', error: null }
+  const all = regionById(ctx.regionId)?.computed ?? []
+  const orig = ctx.calc.name
+  const idx = orig ? all.findIndex((c) => c.name === orig) : -1
+  const key = idx >= 0 ? all[idx].name : DRAFT_KEY
+  const list =
+    idx >= 0
+      ? all.map((c, i) => (i === idx ? { name: key, formula } : c))
+      : [...all, { name: key, formula }]
+  const rep = await previewRowComputed(
+    snapshot(doc.value),
+    ctx.regionId,
+    list,
+    previewData.value ?? {},
+  )
+  return rep.find((r) => r.name === key) ?? { name: key, value: '', kind: 'empty', error: null }
+}
+function findNode(nodes: VarNode[], path: string): VarNode | undefined {
+  for (const n of nodes) {
+    if (n.path === path) return n
+    if (n.children) {
+      const f = findNode(n.children, path)
+      if (f) return f
+    }
+  }
+  return undefined
+}
+// Variable groups for the row-formula picker: this row's fields first, then
+// earlier calculated columns, the implicit line info, then everything a
+// doc-level formula can see. Ordering is the teaching device: the top group is
+// what a non-technical user almost always wants.
+const rowVarGroups = computed<VarGroup[]>(() => {
+  const ctx = editingRowCalc.value
+  if (!ctx) return varGroups.value
+  const region = regionById(ctx.regionId)
+  const groups: VarGroup[] = []
+  if (region?.source) {
+    const fields: VarOption[] = []
+    collectRowFields(
+      findNode(tree.value, region.source)?.children ?? [],
+      `${region.source}.0.`,
+      fields,
+    )
+    if (fields.length) groups.push({ label: t('calcGroupThisRow'), options: fields })
+  }
+  const earlier: VarOption[] = []
+  for (const c of region?.computed ?? []) {
+    if (ctx.calc.name && c.name === ctx.calc.name) break // only EARLIER columns resolve
+    earlier.push({ label: `row.${c.name}`, insert: `row.${c.name}` })
+  }
+  if (earlier.length) groups.push({ label: t('calcGroupRowCalcs'), options: earlier })
+  if (region?.source) {
+    groups.push({
+      label: t('calcGroupLineInfo'),
+      options: [
+        { label: `row.number — ${t('rowLineNumber')}`, insert: 'row.number' },
+        { label: `row.count — ${t('rowLineCount')}`, insert: 'row.count' },
+        { label: `row.first — ${t('rowLineFirst')}`, insert: 'row.first' },
+        { label: `row.last — ${t('rowLineLast')}`, insert: 'row.last' },
+        { label: `row.index — ${t('rowLineIndex')}`, insert: 'row.index' },
+      ],
+    })
+  }
+  groups.push(...varGroups.value)
+  return groups
+})
+// Place a calculated column on the ticket: a variable element bound to
+// row.<name>, dropped on the band's first row with type-appropriate defaults.
+function placeRowCalc(regionId: string, c: Computed) {
+  const region = regionById(regionId)
+  if (!region) return
+  const rep = rowCalcReports.value[regionId]?.[c.name]
+  const el: Element = {
+    id: newId(),
+    row: region.start_row,
+    col: 0,
+    type: 'variable',
+    path: `row.${c.name}`,
+    length: 10,
+    align: 'left',
+  }
+  if (rep?.kind === 'number') {
+    const hasFraction = rep.value.includes('.')
+    el.number = { decimals: hasFraction ? 2 : 0, rounding: 'half_up', thousands: true }
+    el.align = 'right'
+    el.length = Math.max(8, rep.value.length + 2)
+  } else if (rep?.value) {
+    el.length = Math.min(40, Math.max(6, rep.value.length + 2))
+  }
+  doc.value.elements.push(el)
+  selectElement(el.id)
+}
+
+// --- missing-fields badge ---------------------------------------------------
+// Paths the document references that don't exist in the sample data. On a REAL
+// print these render empty, so surface them while designing (the preview shows
+// fakes for liveliness — this badge is the honesty layer on top).
+const missingPaths = ref<string[]>([])
+watch(
+  [doc, previewData],
+  async () => {
+    try {
+      missingPaths.value = await unresolvedPaths(snapshot(doc.value), previewData.value ?? {})
+    } catch {
+      missingPaths.value = []
+    }
+  },
+  { immediate: true, deep: true },
+)
+
+// --- element condition context ----------------------------------------------
+// The band containing the selected element (if any): its row.* names are valid
+// condition targets and must not be flagged UNAVAILABLE.
+const selectedElBand = computed<Region | null>(() => {
+  const e = selected.value
+  if (!e) return null
+  return (doc.value.regions ?? []).find((r) => e.row >= r.start_row && e.row < r.end_row) ?? null
+})
+const selectedRowPaths = computed<string[]>(() => {
+  const r = selectedElBand.value
+  if (!r) return []
+  const names = (r.computed ?? []).map((c) => `row.${c.name}`)
+  if (r.source) names.push(...RESERVED_ROW_NAMES.map((n) => `row.${n}`))
+  return names
+})
+const selectedCondVars = computed(() => [
+  ...selectedRowPaths.value.map((p) => ({ path: p, key: p })),
+  ...allVars.value,
+])
+// "Collapse the row when hidden": turn the element's condition into a one-row
+// conditional band (regions collapse; elements only hide). The band is a real,
+// visible object in the lane afterwards — no hidden magic to keep in sync.
+function collapseRow(id: string) {
+  const el = doc.value.elements.find((e) => e.id === id)
+  if (!el?.condition) return
+  const condition = el.condition
+  updateElement({ ...el, condition: undefined })
+  createRegion({ start_row: el.row, end_row: el.row + 1, condition })
+}
+
 // Add a DYNAMIC image: its bytes come from a variable at print time (a signature,
 // a plot, …). This is the default because it's the common case; providing a file
 // in the modifier panel downgrades it to a static, embedded image. No upload
@@ -598,6 +799,13 @@ async function save() {
       <section class="te-preview-col">
         <PreviewPane :doc="doc" :variables="previewData">
           <template #actions>
+            <span
+              v-if="missingPaths.length"
+              class="te-chip te-chip-warn"
+              :title="t('missingFieldsTip') + '\n' + missingPaths.join('\n')"
+            >
+              ⚠ {{ t('missingFields', { n: missingPaths.length }) }}
+            </span>
             <button class="te-chip" type="button" :title="t('reshuffleTip')" @click="reshuffle">
               {{ t('reshuffle') }}
             </button>
@@ -623,8 +831,12 @@ async function save() {
             :region="selectedBand"
             :loop-sources="loopSources"
             :all-vars="allVars"
+            :calc-reports="rowCalcReports[selectedBand.id]"
             @update:region="updateRegion"
             @remove="removeRegion"
+            @edit-calc="editRowCalc"
+            @remove-calc="removeRowCalc"
+            @place-calc="placeRowCalc"
           />
           <ModifierPanel
             v-else
@@ -633,8 +845,12 @@ async function save() {
             :all-vars="allVars"
             :loop-sources="loopSources"
             :content-cols="contentCols"
+            :cond-vars="selectedCondVars"
+            :extra-known-paths="selectedRowPaths"
+            :in-band="!!selectedElBand"
             @update:element="updateElement"
             @remove="removeElement"
+            @collapse-row="collapseRow"
           />
         </div>
       </aside>
@@ -648,6 +864,18 @@ async function save() {
       :existing-names="computedVars.map((c) => c.name)"
       @save="saveCalc"
       @cancel="editingCalc = null"
+    />
+
+    <ComputedEditor
+      v-if="editingRowCalc"
+      :model-value="editingRowCalc.calc"
+      :var-groups="rowVarGroups"
+      :preview="previewRowFormula"
+      :existing-names="(regionById(editingRowCalc.regionId)?.computed ?? []).map((c) => c.name)"
+      variant="row"
+      :reserved-names="RESERVED_ROW_NAMES"
+      @save="saveRowCalc"
+      @cancel="editingRowCalc = null"
     />
   </div>
 </template>
@@ -782,6 +1010,13 @@ async function save() {
 }
 .te-chip:hover {
   background: var(--te-accent);
+}
+.te-chip-warn {
+  color: #d97706;
+  border-color: color-mix(in srgb, #d97706 55%, var(--te-input));
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  cursor: help;
+  white-space: pre-line;
 }
 /* calculated variables section (left rail) */
 .te-calc {
