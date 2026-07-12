@@ -1,6 +1,6 @@
 {
   "name": "@ticket-editor/vue",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "description": "Embeddable Vue 3 ticket-format editor with a 1:1 wasm preview. Zero coupling to any host UI kit.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
