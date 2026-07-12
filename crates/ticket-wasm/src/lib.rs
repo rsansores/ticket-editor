@@ -32,17 +32,41 @@ fn with_fonts<T>(f: impl FnOnce(&mut Fonts) -> Result<T, JsError>) -> Result<T, 
 ///
 /// * `doc_json` — the canonical `TicketDoc` as a JSON string.
 /// * `variables_json` — the variable data as a JSON string; pass `""` or `"null"`
-///   to get a preview filled with deterministic fake values.
+///   for no data.
+/// * `placeholders` — when omitted or `true` (this shim serves the editor, so
+///   preview mode is the default HERE; the native API defaults to `false`), a
+///   variable path that doesn't resolve renders a deterministic fake value.
+///   Pass `false` to render exactly what a backend print would produce
+///   (unresolved paths render empty).
 ///
 /// Returns the PNG as a `Uint8Array`. On bad input — including a document that
 /// uses a font family not yet registered via [`register_font`] — it throws a JS
 /// error with a human-readable message (the editor surfaces it).
 #[wasm_bindgen]
-pub fn render_png(doc_json: &str, variables_json: &str) -> Result<Vec<u8>, JsError> {
+pub fn render_png(
+    doc_json: &str,
+    variables_json: &str,
+    placeholders: Option<bool>,
+) -> Result<Vec<u8>, JsError> {
+    let opts = if placeholders.unwrap_or(true) {
+        ticket_core::RenderOptions::placeholders()
+    } else {
+        ticket_core::RenderOptions::default()
+    };
     with_fonts(|fonts| {
-        ticket_core::render_json_with_fonts(doc_json, variables_json, fonts)
+        ticket_core::render_json_with_options(doc_json, variables_json, fonts, &opts)
             .map_err(|e| JsError::new(&e.to_string()))
     })
+}
+
+/// The variable paths a document references that do NOT resolve in the given
+/// data — what powers the editor's "N fields missing from your sample data"
+/// warning and a backend's save-time template validation. Returns a JSON array
+/// of path strings. Throws only on malformed JSON input.
+#[wasm_bindgen]
+pub fn unresolved_paths(doc_json: &str, variables_json: &str) -> Result<String, JsError> {
+    ticket_core::unresolved_paths_json(doc_json, variables_json)
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Register (or replace) a monospace font family so documents can reference it by
@@ -91,5 +115,26 @@ pub fn schema_version() -> u32 {
 #[wasm_bindgen]
 pub fn preview_computed(computed_json: &str, variables_json: &str) -> Result<String, JsError> {
     ticket_core::preview_computed_json(computed_json, variables_json)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Evaluate a band's (draft) row-scoped formulas against the band's first data
+/// item, for the editor's "calculated column" live preview + error feedback.
+///
+/// * `doc_json` — the current `TicketDoc` (provides `calc.*` and the band's source).
+/// * `region_id` — which band the formulas belong to.
+/// * `computed_json` — a JSON array of `{ name, formula }` (the draft list).
+/// * `variables_json` — the sample data (`""`/`"null"` for none).
+///
+/// Returns a JSON array of `{ name, value, kind, error }`, same shape as
+/// [`preview_computed`]. Throws only on malformed JSON input.
+#[wasm_bindgen]
+pub fn preview_row_computed(
+    doc_json: &str,
+    region_id: &str,
+    computed_json: &str,
+    variables_json: &str,
+) -> Result<String, JsError> {
+    ticket_core::preview_row_computed_json(doc_json, region_id, computed_json, variables_json)
         .map_err(|e| JsError::new(&e.to_string()))
 }

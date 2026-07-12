@@ -21,6 +21,11 @@ const props = defineProps<{
   preview: (formula: string) => Promise<ComputedResult>
   /** Names already taken (to reject duplicates). */
   existingNames: string[]
+  /** Doc-level calculated value (default) or a band's calculated column. Only
+   *  swaps the dialog copy — the form and engine are identical. */
+  variant?: 'doc' | 'row'
+  /** Names the engine reserves (the implicit row.* values); rejected like dupes. */
+  reservedNames?: readonly string[]
 }>()
 const emit = defineEmits<{ save: [c: Computed]; cancel: [] }>()
 
@@ -97,6 +102,7 @@ const nameError = computed<string>(() => {
   const n = name.value.trim()
   if (n === '') return t('calcNameRequired')
   if (!isValidName(n)) return t('calcNameInvalid')
+  if (props.reservedNames?.includes(n)) return t('calcNameReserved', { name: n })
   if (n !== originalName.value && props.existingNames.includes(n)) return t('calcNameTaken')
   return ''
 })
@@ -116,13 +122,19 @@ function save() {
     <div class="te-modal" role="dialog" aria-modal="true">
       <header class="te-modal-head">
         <strong>{{
-          modelValue && modelValue.name ? t('calcEditTitle') : t('calcNewTitle')
+          variant === 'row'
+            ? modelValue && modelValue.name
+              ? t('rowCalcEditTitle')
+              : t('rowCalcNewTitle')
+            : modelValue && modelValue.name
+              ? t('calcEditTitle')
+              : t('calcNewTitle')
         }}</strong>
         <button class="te-modal-x" type="button" :aria-label="t('cancel')" @click="emit('cancel')">
           ✕
         </button>
       </header>
-      <p class="te-modal-lead">{{ t('calcLead') }}</p>
+      <p class="te-modal-lead">{{ variant === 'row' ? t('rowCalcLead') : t('calcLead') }}</p>
 
       <label class="te-field">
         <span>{{ t('calcName') }}</span>
@@ -173,6 +185,7 @@ function save() {
           result && result.value !== '' ? result.value : t('calcPreviewEmpty')
         }}</code>
       </div>
+      <p v-if="variant === 'row'" class="te-hint">{{ t('rowCalcPreviewNote') }}</p>
 
       <footer class="te-modal-foot">
         <button class="te-btn te-btn-ghost" type="button" @click="emit('cancel')">

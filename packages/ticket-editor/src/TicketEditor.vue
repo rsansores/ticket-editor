@@ -14,9 +14,9 @@ import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
 import TypeTag from './components/TypeTag.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
-import { previewComputed } from './composables/useRenderer'
+import { previewComputed, previewRowComputed, unresolvedPaths } from './composables/useRenderer'
 import { provideEditorI18n, type Messages } from './i18n'
-import { SCHEMA_VERSION } from './types'
+import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
   Computed,
   ComputedResult,
@@ -334,15 +334,38 @@ function calcHasError(name: string): boolean {
 // — earlier-only); for a new var, append it. The sentinel key can't collide with
 // a real name because the editor forbids non-`[A-Za-z_]` names.
 const DRAFT_KEY = '--draft--'
-async function previewFormula(formula: string): Promise<ComputedResult> {
-  const all = computedVars.value
-  const orig = editingCalc.value?.name
-  const idx = orig ? all.findIndex((c) => c.name === orig) : -1
+// Splice a draft formula into a computed list at its real position (an edit
+// replaces in place so forward references resolve exactly as they will save;
+// a new entry is appended). Shared by the doc-level and row-level dialogs so
+// the two preview paths can't drift.
+function draftList(
+  all: Computed[],
+  origName: string | undefined,
+  formula: string,
+): { list: Computed[]; key: string } {
+  const idx = origName ? all.findIndex((c) => c.name === origName) : -1
   const key = idx >= 0 ? all[idx].name : DRAFT_KEY
   const list =
     idx >= 0
       ? all.map((c, i) => (i === idx ? { name: key, formula } : c))
       : [...all, { name: key, formula }]
+  return { list, key }
+}
+// Upsert by the original name captured when the dialog opened — renames keep
+// their position. Shared by doc-level and band-level saves.
+function upsertComputed(
+  list: Computed[],
+  origName: string | undefined,
+  next: Computed,
+): Computed[] {
+  const i = origName ? list.findIndex((c) => c.name === origName) : -1
+  const out = [...list]
+  if (i >= 0) out[i] = next
+  else out.push(next)
+  return out
+}
+async function previewFormula(formula: string): Promise<ComputedResult> {
+  const { list, key } = draftList(computedVars.value, editingCalc.value?.name, formula)
   const rep = await previewComputed(list, props.variables ?? {})
   return rep.find((r) => r.name === key) ?? { name: key, value: '', kind: 'empty', error: null }
 }
@@ -353,13 +376,7 @@ function editCalc(c: Computed) {
   editingCalc.value = JSON.parse(JSON.stringify(c)) as Computed
 }
 function saveCalc(next: Computed) {
-  const list = [...(doc.value.computed ?? [])]
-  // Match by the original name captured when the dialog opened (renames keep place).
-  const orig = editingCalc.value?.name
-  const i = orig ? list.findIndex((c) => c.name === orig) : -1
-  if (i >= 0) list[i] = next
-  else list.push(next)
-  doc.value.computed = list
+  doc.value.computed = upsertComputed(doc.value.computed ?? [], editingCalc.value?.name, next)
   editingCalc.value = null
 }
 function removeCalc(name: string) {
@@ -375,10 +392,211 @@ function addCalcElement(c: Computed) {
   addVariable({ key: c.name, path: `calc.${c.name}`, sample, type: calcKind(c.name) })
 }
 
+// --- calculated columns (row-scoped, live on a band) -----------------------
+// The column being edited: which band it belongs to plus the draft value. The
+// same ComputedEditor dialog is reused with variant="row" — no new mental model.
+const editingRowCalc = ref<{ regionId: string; calc: Computed } | null>(null)
+function regionById(id: string): Region | undefined {
+  return (doc.value.regions ?? []).find((r) => r.id === id)
+}
+function editRowCalc(regionId: string, calc: Computed | null) {
+  editingRowCalc.value = {
+    regionId,
+    calc: calc ? (JSON.parse(JSON.stringify(calc)) as Computed) : { name: '', formula: '' },
+  }
+}
+function saveRowCalc(next: Computed) {
+  const ctx = editingRowCalc.value
+  editingRowCalc.value = null
+  if (!ctx) return
+  const region = regionById(ctx.regionId)
+  if (!region) return
+  updateRegion({ ...region, computed: upsertComputed(region.computed ?? [], ctx.calc.name, next) })
+}
+function removeRowCalc(regionId: string, name: string) {
+  const region = regionById(regionId)
+  if (!region) return
+  const list = (region.computed ?? []).filter((c) => c.name !== name)
+  updateRegion({ ...region, computed: list.length ? list : undefined })
+}
+// Live first-row results per band, keyed regionId → name → result. Drives the
+// value chips in the band drawer and the default formatting when placed.
+// Populated by the shared integrity watcher below.
+const rowCalcReports = ref<Record<string, Record<string, ComputedResult>>>({})
+// Evaluate a DRAFT row formula in its real position within the band's list
+// (same replace-in-place trick as previewFormula) against the first data row.
+async function previewRowFormula(formula: string): Promise<ComputedResult> {
+  const ctx = editingRowCalc.value
+  if (!ctx) return { name: '', value: '', kind: 'empty', error: null }
+  const { list, key } = draftList(regionById(ctx.regionId)?.computed ?? [], ctx.calc.name, formula)
+  const rep = await previewRowComputed(
+    snapshot(doc.value),
+    ctx.regionId,
+    list,
+    previewData.value ?? {},
+  )
+  return rep.find((r) => r.name === key) ?? { name: key, value: '', kind: 'empty', error: null }
+}
+function findNode(nodes: VarNode[], path: string): VarNode | undefined {
+  for (const n of nodes) {
+    if (n.path === path) return n
+    if (n.children) {
+      const f = findNode(n.children, path)
+      if (f) return f
+    }
+  }
+  return undefined
+}
+// Variable groups for the row-formula picker: this row's fields first, then
+// earlier calculated columns, the implicit line info, then everything a
+// doc-level formula can see. Ordering is the teaching device: the top group is
+// what a non-technical user almost always wants.
+const rowVarGroups = computed<VarGroup[]>(() => {
+  const ctx = editingRowCalc.value
+  if (!ctx) return varGroups.value
+  const region = regionById(ctx.regionId)
+  const groups: VarGroup[] = []
+  if (region?.source) {
+    const fields: VarOption[] = []
+    collectRowFields(
+      findNode(tree.value, region.source)?.children ?? [],
+      `${region.source}.0.`,
+      fields,
+    )
+    if (fields.length) groups.push({ label: t('calcGroupThisRow'), options: fields })
+  }
+  const earlier: VarOption[] = []
+  for (const c of region?.computed ?? []) {
+    if (ctx.calc.name && c.name === ctx.calc.name) break // only EARLIER columns resolve
+    earlier.push({ label: `row.${c.name}`, insert: `row.${c.name}` })
+  }
+  if (earlier.length) groups.push({ label: t('calcGroupRowCalcs'), options: earlier })
+  if (region?.source) {
+    groups.push({
+      label: t('calcGroupLineInfo'),
+      options: [
+        { label: `row.number — ${t('rowLineNumber')}`, insert: 'row.number' },
+        { label: `row.count — ${t('rowLineCount')}`, insert: 'row.count' },
+        { label: `row.first — ${t('rowLineFirst')}`, insert: 'row.first' },
+        { label: `row.last — ${t('rowLineLast')}`, insert: 'row.last' },
+        { label: `row.index — ${t('rowLineIndex')}`, insert: 'row.index' },
+      ],
+    })
+  }
+  groups.push(...varGroups.value)
+  return groups
+})
+// Place a calculated column on the ticket: a variable element bound to
+// row.<name>, dropped on the band's first row with type-appropriate defaults.
+function placeRowCalc(regionId: string, c: Computed) {
+  const region = regionById(regionId)
+  if (!region) return
+  const rep = rowCalcReports.value[regionId]?.[c.name]
+  const el: Element = {
+    id: newId(),
+    row: region.start_row,
+    col: 0,
+    type: 'variable',
+    path: `row.${c.name}`,
+    length: 10,
+    align: 'left',
+  }
+  if (rep?.kind === 'number') {
+    const hasFraction = rep.value.includes('.')
+    el.number = { decimals: hasFraction ? 2 : 0, rounding: 'half_up', thousands: true }
+    el.align = 'right'
+    el.length = Math.max(8, rep.value.length + 2)
+  } else if (rep?.value) {
+    el.length = Math.min(40, Math.max(6, rep.value.length + 2))
+  }
+  doc.value.elements.push(el)
+  selectElement(el.id)
+}
+
+// --- missing-fields badge ---------------------------------------------------
+// Paths the document references that don't exist in the sample data. On a REAL
+// print these render empty, so surface them while designing (the preview shows
+// fakes for liveliness — this badge is the honesty layer on top).
+const missingPaths = ref<string[]>([])
+
+// One debounced integrity pass per doc/data change: a single snapshot feeds
+// the missing-paths check and every band's row-calc preview, in parallel. The
+// sequence token drops stale async results (rapid edits can resolve out of
+// order and would otherwise clobber a newer state with an older answer).
+let integritySeq = 0
+let integrityTimer: ReturnType<typeof setTimeout> | undefined
+async function runIntegrityPass() {
+  const seq = ++integritySeq
+  const snap = snapshot(doc.value)
+  const data = previewData.value ?? {}
+  try {
+    const bands = (snap.regions ?? []).filter((r) => r.computed?.length)
+    const [missing, reports] = await Promise.all([
+      unresolvedPaths(snap, data),
+      Promise.all(bands.map((r) => previewRowComputed(snap, r.id, r.computed ?? [], data))),
+    ])
+    if (seq !== integritySeq) return // superseded by a newer edit
+    missingPaths.value = missing
+    rowCalcReports.value = Object.fromEntries(
+      bands.map((r, i) => [r.id, Object.fromEntries(reports[i].map((x) => [x.name, x]))]),
+    )
+  } catch {
+    if (seq !== integritySeq) return
+    missingPaths.value = []
+    rowCalcReports.value = {}
+  }
+}
+watch(
+  [doc, previewData],
+  () => {
+    clearTimeout(integrityTimer)
+    integrityTimer = setTimeout(runIntegrityPass, 180)
+  },
+  { immediate: true, deep: true },
+)
+
+// --- element condition context ----------------------------------------------
+// The band containing the selected element (if any): its row.* names are valid
+// condition targets and must not be flagged UNAVAILABLE.
+const selectedElBand = computed<Region | null>(() => {
+  const e = selected.value
+  if (!e) return null
+  return (doc.value.regions ?? []).find((r) => e.row >= r.start_row && e.row < r.end_row) ?? null
+})
+const selectedRowPaths = computed<string[]>(() => {
+  const r = selectedElBand.value
+  if (!r) return []
+  const names = (r.computed ?? []).map((c) => `row.${c.name}`)
+  if (r.source) names.push(...RESERVED_ROW_NAMES.map((n) => `row.${n}`))
+  return names
+})
+const selectedCondVars = computed(() => [
+  ...selectedRowPaths.value.map((p) => ({ path: p, key: p })),
+  ...allVars.value,
+])
+// "Collapse the row when hidden": turn the element's condition into a one-row
+// conditional band (regions collapse; elements only hide). The band is a real,
+// visible object in the lane afterwards — no hidden magic to keep in sync.
+function collapseRow(id: string) {
+  const el = doc.value.elements.find((e) => e.id === id)
+  if (!el?.condition) return
+  const condition = el.condition
+  updateElement({ ...el, condition: undefined })
+  createRegion({ start_row: el.row, end_row: el.row + 1, condition })
+}
+
 // Add a DYNAMIC image: its bytes come from a variable at print time (a signature,
 // a plot, …). This is the default because it's the common case; providing a file
 // in the modifier panel downgrades it to a static, embedded image. No upload
 // dialog on add — an image with no source just shows a placeholder.
+// A finishing marker: zero ink, tells the backend where to cut / kick the
+// drawer. Defaults to `cut` at the end of the ticket — the overwhelmingly
+// common case (one receipt = cut at the end).
+function addMarker() {
+  const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'marker', name: 'cut' }
+  doc.value.elements.push(el)
+  selectElement(el.id)
+}
 function addImage() {
   const el: Element = {
     id: newId(),
@@ -451,6 +669,13 @@ function removeRegion(id: string) {
   if (selectedBandId.value === id) selectedBandId.value = null
 }
 
+// Raster width in printer dots. Thermal heads have a fixed native dot width
+// (203 dpi: 384 = 58 mm, 576 = 80 mm); anything else gets scaled by the driver
+// and prints fuzzy. Worth far more than a contrast slider — warn on mismatch.
+const STANDARD_DOT_WIDTHS = [384, 576]
+const dotWidth = computed(() => doc.value.paper.width_chars * (doc.value.paper.cell_width_px ?? 12))
+const dotWidthOk = computed(() => STANDARD_DOT_WIDTHS.includes(dotWidth.value))
+
 // Printable content width in characters — used by a field's per-element
 // "Fit to width" action in the modifier panel.
 const contentCols = computed(() => {
@@ -500,6 +725,16 @@ async function save() {
       <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">
         {{ t('addBarcode') }}
       </button>
+      <button class="te-btn te-btn-ghost" type="button" @click="addMarker">
+        {{ t('addMarker') }}
+      </button>
+      <span
+        v-if="!dotWidthOk"
+        class="te-chip te-chip-warn"
+        :title="t('dotWidthWarnTip', { px: dotWidth })"
+      >
+        {{ t('dotWidthWarn', { px: dotWidth }) }}
+      </span>
       <div class="te-spacer" />
       <button
         v-if="onSave"
@@ -598,6 +833,13 @@ async function save() {
       <section class="te-preview-col">
         <PreviewPane :doc="doc" :variables="previewData">
           <template #actions>
+            <span
+              v-if="missingPaths.length"
+              class="te-chip te-chip-warn"
+              :title="t('missingFieldsTip') + '\n' + missingPaths.join('\n')"
+            >
+              ⚠ {{ t('missingFields', { n: missingPaths.length }) }}
+            </span>
             <button class="te-chip" type="button" :title="t('reshuffleTip')" @click="reshuffle">
               {{ t('reshuffle') }}
             </button>
@@ -623,8 +865,12 @@ async function save() {
             :region="selectedBand"
             :loop-sources="loopSources"
             :all-vars="allVars"
+            :calc-reports="rowCalcReports[selectedBand.id]"
             @update:region="updateRegion"
             @remove="removeRegion"
+            @edit-calc="editRowCalc"
+            @remove-calc="removeRowCalc"
+            @place-calc="placeRowCalc"
           />
           <ModifierPanel
             v-else
@@ -633,8 +879,12 @@ async function save() {
             :all-vars="allVars"
             :loop-sources="loopSources"
             :content-cols="contentCols"
+            :cond-vars="selectedCondVars"
+            :extra-known-paths="selectedRowPaths"
+            :in-band="!!selectedElBand"
             @update:element="updateElement"
             @remove="removeElement"
+            @collapse-row="collapseRow"
           />
         </div>
       </aside>
@@ -648,6 +898,18 @@ async function save() {
       :existing-names="computedVars.map((c) => c.name)"
       @save="saveCalc"
       @cancel="editingCalc = null"
+    />
+
+    <ComputedEditor
+      v-if="editingRowCalc"
+      :model-value="editingRowCalc.calc"
+      :var-groups="rowVarGroups"
+      :preview="previewRowFormula"
+      :existing-names="(regionById(editingRowCalc.regionId)?.computed ?? []).map((c) => c.name)"
+      variant="row"
+      :reserved-names="RESERVED_ROW_NAMES"
+      @save="saveRowCalc"
+      @cancel="editingRowCalc = null"
     />
   </div>
 </template>
@@ -782,6 +1044,13 @@ async function save() {
 }
 .te-chip:hover {
   background: var(--te-accent);
+}
+.te-chip-warn {
+  color: #d97706;
+  border-color: color-mix(in srgb, #d97706 55%, var(--te-input));
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  cursor: help;
+  white-space: pre-line;
 }
 /* calculated variables section (left rail) */
 .te-calc {

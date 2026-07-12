@@ -13,10 +13,40 @@
 
 use serde_json::Value;
 
-use crate::schema::{Computed, CondOp, Condition};
+use crate::schema::{
+    Computed, CondOp, Condition, ElementKind, Region, TicketDoc, RESERVED_ROW_NAMES,
+};
 
 /// A loop context: the array path being looped, the current index, and the item.
 pub type LoopCtx<'a> = Option<(&'a str, usize, &'a Value)>;
+
+/// The full name-resolution scope for an element or formula: an optional loop
+/// binding plus the optional `row.*` values of the current band iteration.
+///
+/// `row.*` is intercepted here and **never** falls through to the document root
+/// or the faker — outside its band (or in a band that defines no row values) a
+/// `row.<name>` path simply doesn't resolve.
+#[derive(Clone, Copy, Default)]
+pub struct Scope<'a> {
+    /// Current loop binding: (source path, index, item).
+    pub loop_ctx: LoopCtx<'a>,
+    /// Row-scoped values for the current band iteration (a JSON object holding
+    /// the implicit `index`/`number`/`count`/`first`/`last` plus any declared
+    /// [`Region::computed`] results).
+    pub row: Option<&'a Value>,
+}
+
+/// Resolve a `path` in a full scope: `row.*` against the current band
+/// iteration's row values, everything else via [`resolve_loop`].
+pub fn resolve_scoped<'a>(scope: Scope<'a>, root: &'a Value, path: &str) -> Option<&'a Value> {
+    if path == "row" {
+        return scope.row;
+    }
+    if let Some(rest) = path.strip_prefix("row.") {
+        return scope.row.and_then(|r| resolve(r, rest));
+    }
+    resolve_loop(scope.loop_ctx, root, path)
+}
 
 /// Resolve a `path` for an element, honoring loop context. Two ways an element
 /// inside a loop binds to the current item, both supported so the editor never
@@ -43,9 +73,31 @@ pub fn resolve_loop<'a>(loop_ctx: LoopCtx<'a>, root: &'a Value, path: &str) -> O
     resolve(root, path)
 }
 
-/// Evaluate a condition in an optional loop context.
-pub fn eval_condition(loop_ctx: LoopCtx, root: &Value, cond: &Condition) -> bool {
-    let found = resolve_loop(loop_ctx, root, &cond.var);
+/// Resolve a path to its display string, applying the placeholder policy in
+/// ONE place for every element kind (variable, QR, barcode, image):
+///   * resolved → its string (JSON null → empty, like everywhere else);
+///   * missing + placeholder mode → a deterministic fake — EXCEPT `row.*`,
+///     which never fakes, so a row value referenced outside its band looks
+///     exactly as empty in the editor as it prints on paper;
+///   * missing otherwise → `None`: the caller draws nothing.
+pub(crate) fn resolve_or_fake(
+    scope: Scope,
+    root: &Value,
+    path: &str,
+    placeholders: bool,
+) -> Option<String> {
+    if let Some(v) = resolve_scoped(scope, root, path) {
+        return Some(value_to_string(v));
+    }
+    let row_scoped = path == "row" || path.starts_with("row.");
+    (placeholders && !row_scoped).then(|| fake_for(path))
+}
+
+/// Evaluate a condition in a scope (loop item + row values). Inside a loop band
+/// this lets a condition target `row.last`, `row.number`, or a row-computed
+/// value as naturally as a data field.
+pub fn eval_condition(scope: Scope, root: &Value, cond: &Condition) -> bool {
+    let found = resolve_scoped(scope, root, &cond.var);
     let present = matches!(found, Some(v) if !is_empty_value(v));
     match cond.op {
         CondOp::IsSet => present,
@@ -116,6 +168,11 @@ pub fn value_to_string(v: &Value) -> String {
 /// Adversarial-input cap: at most this many computed variables per document.
 const MAX_COMPUTED: usize = 256;
 
+/// Hard ceiling on loop iterations — shared by the renderer's flow walk and
+/// `preview_row`, so the editor's `row.count` / `row.last` chips agree with
+/// what actually prints when a data array exceeds the cap.
+pub(crate) const MAX_LOOP: usize = 100_000;
+
 /// Return a clone of the variable data `root` with every calculated variable
 /// merged in under the `calc` key — the working data the renderer resolves
 /// against. Call once per render when `computed` is non-empty; after this a
@@ -165,16 +222,175 @@ fn eval_all(root: &Value, computed: &[Computed]) -> Vec<ComputedReport> {
     let mut working = overlay_calc(root, Value::Object(serde_json::Map::new()));
     let mut calc = serde_json::Map::new();
     let mut out = Vec::new();
+    let budget = crate::expr::fresh_budget();
     for c in computed.iter().take(MAX_COMPUTED) {
         // Expose the values computed so far so this formula can build on them.
         if let Value::Object(m) = &mut working {
             m.insert("calc".to_string(), Value::Object(calc.clone()));
         }
-        let (value, error) = match crate::expr::eval_formula(&c.formula, &working, None) {
-            Ok(v) => (v, None),
+        // One budget across ALL doc-level formulas: aggregates can't multiply
+        // per-formula allowances into a stall.
+        let (value, error) = match crate::expr::compile(&c.formula) {
+            Ok(ast) => (
+                crate::expr::eval_compiled(&ast, &working, Scope::default(), &budget),
+                None,
+            ),
             Err(e) => (Value::Null, Some(e)),
         };
         calc.insert(c.name.clone(), value.clone());
+        out.push(ComputedReport {
+            name: c.name.clone(),
+            value,
+            error,
+        });
+    }
+    out
+}
+
+/// A band's row formulas, parsed once. The renderer evaluates them once per
+/// loop iteration; compiling up front keeps a 100k-item loop from re-parsing
+/// every formula 100k times. Reserved (implicit) names are dropped here so the
+/// implicit value always wins deterministically — the editor rejects them at
+/// validation time, `preview_row` reports them as errors.
+pub(crate) type CompiledRow = Vec<(String, crate::expr::Compiled)>;
+
+/// Parse a band's row formulas into a reusable [`CompiledRow`]. A formula that
+/// fails to parse evaluates to null at render time (same rule as doc-level
+/// computed), so it is simply omitted.
+pub(crate) fn compile_row(computed: &[Computed]) -> CompiledRow {
+    computed
+        .iter()
+        .take(MAX_COMPUTED)
+        .filter(|c| !RESERVED_ROW_NAMES.contains(&c.name.as_str()))
+        .filter_map(|c| {
+            crate::expr::compile(&c.formula)
+                .ok()
+                .map(|ast| (c.name.clone(), ast))
+        })
+        .collect()
+}
+
+/// Seed a row object with the implicit values of iteration `i` of `count`.
+/// The single definition both the renderer and the editor preview build on —
+/// if the implicit set ever changes, it changes here for both.
+fn seed_implicit_row(row: &mut serde_json::Map<String, Value>, iter: Option<(usize, usize)>) {
+    if let Some((i, count)) = iter {
+        row.insert("index".into(), Value::from(i as u64));
+        row.insert("number".into(), Value::from(i as u64 + 1));
+        row.insert("count".into(), Value::from(count as u64));
+        row.insert("first".into(), Value::Bool(i == 0));
+        row.insert("last".into(), Value::Bool(i + 1 == count));
+    }
+}
+
+/// Evaluate a band's compiled row formulas for **one iteration**, returning
+/// the object exposed as `row` to elements inside the band.
+///
+/// `iter` is `Some((index, count))` on a looping band — it fills the implicit
+/// `index` / `number` / `count` / `first` / `last` — and `None` on a
+/// conditional-only band (declared formulas still evaluate; implicits don't
+/// exist because there is no iteration).
+///
+/// Formulas evaluate in declaration order; each sees the earlier ones via
+/// `row.<name>` (a forward reference is null, so cycles are impossible — same
+/// rule as doc-level computed). Aggregate row scans are charged to the shared
+/// `budget`, bounding the whole render rather than a single formula.
+pub(crate) fn eval_row(
+    root: &Value,
+    compiled: &CompiledRow,
+    loop_ctx: LoopCtx,
+    iter: Option<(usize, usize)>,
+    budget: &std::cell::Cell<u64>,
+) -> Value {
+    let mut row = serde_json::Map::new();
+    seed_implicit_row(&mut row, iter);
+    for (name, ast) in compiled {
+        // Lend the values so far to the formula's scope without cloning: move
+        // the map into a Value for the borrow, then take it back.
+        let so_far = Value::Object(std::mem::take(&mut row));
+        let scope = Scope {
+            loop_ctx,
+            row: Some(&so_far),
+        };
+        let v = crate::expr::eval_compiled(ast, root, scope, budget);
+        row = match so_far {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        row.insert(name.clone(), v);
+    }
+    Value::Object(row)
+}
+
+/// Like [`eval_row`], but for the editor: evaluates a band's (draft) row
+/// formulas against the band's **first item** and reports each entry's value
+/// and error — the row-scoped counterpart of [`eval_computed_report`].
+///
+/// `region_id` selects the band (for its `source`); `computed` is the draft
+/// formula list being edited (it replaces the band's stored list, so renames
+/// and reorders preview exactly as they will save). Doc-level computed are
+/// merged first so `calc.*` references resolve. On a band whose source is
+/// missing or empty, formulas evaluate with no row binding — field references
+/// come back null, which is exactly what a render would do.
+pub fn preview_row(
+    doc: &TicketDoc,
+    region_id: &str,
+    computed: &[Computed],
+    variables: &Value,
+) -> Vec<ComputedReport> {
+    let merged;
+    let root = if doc.computed.is_empty() {
+        variables
+    } else {
+        merged = with_computed(variables, &doc.computed);
+        &merged
+    };
+    let src = doc
+        .regions
+        .iter()
+        .find(|r| r.id == region_id)
+        .and_then(|r| r.source.as_deref());
+    let items = src.and_then(|s| match resolve(root, s) {
+        Some(Value::Array(a)) if !a.is_empty() => Some(a),
+        _ => None,
+    });
+    // Cap the count like the renderer does, so `row.count` / `row.last` chips
+    // never promise something print won't do.
+    let (loop_ctx, iter): (LoopCtx, Option<(usize, usize)>) = match (src, items) {
+        (Some(s), Some(a)) => (Some((s, 0, &a[0])), Some((0, a.len().min(MAX_LOOP)))),
+        _ => (None, None),
+    };
+
+    let mut row = serde_json::Map::new();
+    seed_implicit_row(&mut row, iter);
+    let budget = crate::expr::fresh_budget();
+    let mut out = Vec::new();
+    for c in computed.iter().take(MAX_COMPUTED) {
+        if RESERVED_ROW_NAMES.contains(&c.name.as_str()) {
+            out.push(ComputedReport {
+                name: c.name.clone(),
+                value: Value::Null,
+                error: Some(format!("'{}' is a built-in row value", c.name)),
+            });
+            continue;
+        }
+        let (value, error) = match crate::expr::compile(&c.formula) {
+            Ok(ast) => {
+                let so_far = Value::Object(std::mem::take(&mut row));
+                let scope = Scope {
+                    loop_ctx,
+                    row: Some(&so_far),
+                };
+                let v = crate::expr::eval_compiled(&ast, root, scope, &budget);
+                row = match so_far {
+                    Value::Object(m) => m,
+                    _ => serde_json::Map::new(),
+                };
+                (v, None)
+            }
+            Err(e) => (Value::Null, Some(e)),
+        };
+        row.insert(c.name.clone(), value.clone());
         out.push(ComputedReport {
             name: c.name.clone(),
             value,
@@ -237,6 +453,136 @@ pub(crate) fn number_value(x: f64) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::Null)
     }
+}
+
+impl TicketDoc {
+    /// Every variable path this document references that does **not** resolve in
+    /// `variables` (with calculated variables merged under `calc.*` first) —
+    /// duplicates removed, in document order.
+    ///
+    /// This is what turns a silent field corruption into a visible error: the
+    /// editor can show "3 fields don't exist in your sample data", and a backend
+    /// can refuse to save a template referencing paths outside its variable tree.
+    ///
+    /// Checked: `Variable` paths, `from_variable` QR / barcode / image sources,
+    /// element and region conditions (except `is_set` / `is_empty`, whose whole
+    /// point is probing a maybe-absent field), and loop `source`s. Paths inside a
+    /// loop band resolve against the band's first item, exactly like a render;
+    /// when the loop source itself is missing or empty, its inner paths are
+    /// skipped (unverifiable) rather than reported as noise. `row.<name>` is
+    /// checked against the band's declared and implicit row values. Formula
+    /// *bodies* are not scanned — a formula's unresolved path is already
+    /// null-safe by design and surfaced by the editor's formula error line.
+    pub fn unresolved_paths(&self, variables: &Value) -> Vec<String> {
+        let merged;
+        let root = if self.computed.is_empty() {
+            variables
+        } else {
+            merged = with_computed(variables, &self.computed);
+            &merged
+        };
+
+        let mut out: Vec<String> = Vec::new();
+        let add = |out: &mut Vec<String>, p: &str| {
+            if !p.is_empty() && !out.iter().any(|x| x == p) {
+                out.push(p.to_string());
+            }
+        };
+
+        for r in &self.regions {
+            if let Some(src) = &r.source {
+                if !matches!(resolve(root, src), Some(Value::Array(_))) {
+                    add(&mut out, src);
+                }
+            }
+            if let Some(c) = &r.condition {
+                // Region conditions evaluate at root scope (no loop item).
+                if probes_value(c) && resolve(root, &c.var).is_none() {
+                    add(&mut out, &c.var);
+                }
+            }
+        }
+
+        for el in &self.elements {
+            let band = self
+                .regions
+                .iter()
+                .find(|r| el.row >= r.start_row && el.row < r.end_row);
+            // Loop bands bind inner paths to their first item, like a render. A
+            // source that is missing/empty makes inner paths unverifiable — skip
+            // them (the bad source itself was already reported above).
+            let loop_ctx: LoopCtx = match band.and_then(|r| r.source.as_deref()) {
+                Some(src) => match resolve(root, src) {
+                    Some(Value::Array(a)) if !a.is_empty() => Some((src, 0, &a[0])),
+                    _ => continue,
+                },
+                None => None,
+            };
+            let check = |out: &mut Vec<String>, path: &str| {
+                if path.is_empty() {
+                    return;
+                }
+                if let Some(name) = path.strip_prefix("row.") {
+                    if !row_name_exists(band, name) {
+                        add(out, path);
+                    }
+                    return;
+                }
+                if path == "row" || resolve_loop(loop_ctx, root, path).is_none() {
+                    add(out, path);
+                }
+            };
+            match &el.kind {
+                ElementKind::Variable { path, .. } => check(&mut out, path),
+                ElementKind::Qr {
+                    value,
+                    from_variable,
+                    ..
+                }
+                | ElementKind::Barcode {
+                    value,
+                    from_variable,
+                    ..
+                } => {
+                    if *from_variable {
+                        check(&mut out, value);
+                    }
+                }
+                ElementKind::Image {
+                    data,
+                    from_variable,
+                    ..
+                } => {
+                    if *from_variable {
+                        check(&mut out, data);
+                    }
+                }
+                ElementKind::Text { .. } | ElementKind::Marker { .. } => {}
+            }
+            if let Some(c) = &el.condition {
+                if probes_value(c) {
+                    check(&mut out, &c.var);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Whether a condition reads the field's *value* (a typo would silently compare
+/// against nothing). `is_set` / `is_empty` legitimately probe absent fields.
+fn probes_value(c: &Condition) -> bool {
+    !matches!(c.op, CondOp::IsSet | CondOp::IsEmpty)
+}
+
+/// Whether `row.<name>` is defined for elements inside `band`: a declared
+/// row-computed value, or (on a looping band) one of the implicit names.
+fn row_name_exists(band: Option<&Region>, name: &str) -> bool {
+    let Some(r) = band else { return false };
+    if r.computed.iter().any(|c| c.name == name) {
+        return true;
+    }
+    r.source.is_some() && RESERVED_ROW_NAMES.contains(&name)
 }
 
 /// Produce a stable fake value for a path when no real data is available.

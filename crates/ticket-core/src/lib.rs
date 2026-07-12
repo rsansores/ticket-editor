@@ -43,14 +43,19 @@ mod render;
 mod schema;
 
 pub use font::{FontFaces, Fonts, DEFAULT_FAMILY};
-pub use render::{render_png, render_png_with_fonts, RenderError};
+pub use render::{
+    render, render_png, render_png_with_fonts, render_png_with_options, MarkerHit, RenderError,
+    RenderOptions, RenderOutput,
+};
 pub use schema::{
     Align, Computed, CondOp, Condition, Element, ElementKind, ImageMode, NumberFormat, Paper,
-    Region, Rounding, Style, Symbology, TicketDoc, VAlign, SCHEMA_VERSION,
+    Region, Rounding, Style, Symbology, TicketDoc, VAlign, MARKER_NAMES, RESERVED_ROW_NAMES,
+    SCHEMA_VERSION,
 };
 
 /// Convenience: render straight from JSON strings (the shape the wasm/HTTP
-/// boundaries actually deal in). Returns PNG bytes. Uses only the built-in font.
+/// boundaries actually deal in). Returns PNG bytes. Uses only the built-in font
+/// and the default [`RenderOptions`].
 pub fn render_json(
     doc_json: &str,
     variables_json: &str,
@@ -66,13 +71,41 @@ pub fn render_json_with_fonts(
     variables_json: &str,
     fonts: &Fonts,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    render_json_with_options(doc_json, variables_json, fonts, &RenderOptions::default())
+}
+
+/// Like [`render_json_with_fonts`], with explicit [`RenderOptions`] (the wasm
+/// preview passes placeholder mode; a backend uses the default).
+pub fn render_json_with_options(
+    doc_json: &str,
+    variables_json: &str,
+    fonts: &Fonts,
+    opts: &RenderOptions,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let doc: TicketDoc = serde_json::from_str(doc_json)?;
-    let variables: serde_json::Value = if variables_json.trim().is_empty() {
-        serde_json::Value::Null
+    let variables = parse_variables(variables_json)?;
+    Ok(render_png_with_options(&doc, &variables, fonts, opts)?)
+}
+
+/// JSON-boundary convenience for [`TicketDoc::unresolved_paths`]: takes the
+/// document and variables as JSON strings, returns a JSON array of the paths
+/// that don't resolve. What the editor's "missing fields" badge and a backend's
+/// save-time validation call through wasm/HTTP.
+pub fn unresolved_paths_json(
+    doc_json: &str,
+    variables_json: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let doc: TicketDoc = serde_json::from_str(doc_json)?;
+    let variables = parse_variables(variables_json)?;
+    Ok(serde_json::to_string(&doc.unresolved_paths(&variables))?)
+}
+
+fn parse_variables(variables_json: &str) -> Result<serde_json::Value, serde_json::Error> {
+    if variables_json.trim().is_empty() {
+        Ok(serde_json::Value::Null)
     } else {
-        serde_json::from_str(variables_json)?
-    };
-    Ok(render_png_with_fonts(&doc, &variables, fonts)?)
+        serde_json::from_str(variables_json)
+    }
 }
 
 /// Evaluate a list of calculated variables against sample data and report each
@@ -85,12 +118,28 @@ pub fn preview_computed_json(
     variables_json: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let computed: Vec<Computed> = serde_json::from_str(computed_json)?;
-    let variables: serde_json::Value = if variables_json.trim().is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::from_str(variables_json)?
-    };
-    let report = data::eval_computed_report(&variables, &computed);
+    let variables = parse_variables(variables_json)?;
+    report_json(data::eval_computed_report(&variables, &computed))
+}
+
+/// The row-scoped counterpart of [`preview_computed_json`]: evaluate a band's
+/// (draft) row formulas against the band's first item and report each result —
+/// what the editor's "calculated column" dialog shows live. `doc_json` provides
+/// the doc-level computed (`calc.*`) and the band's loop `source`;
+/// `computed_json` is the draft `Region.computed` list being edited.
+pub fn preview_row_computed_json(
+    doc_json: &str,
+    region_id: &str,
+    computed_json: &str,
+    variables_json: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let doc: TicketDoc = serde_json::from_str(doc_json)?;
+    let computed: Vec<Computed> = serde_json::from_str(computed_json)?;
+    let variables = parse_variables(variables_json)?;
+    report_json(data::preview_row(&doc, region_id, &computed, &variables))
+}
+
+fn report_json(report: Vec<data::ComputedReport>) -> Result<String, Box<dyn std::error::Error>> {
     let arr: Vec<serde_json::Value> = report
         .into_iter()
         .map(|r| {

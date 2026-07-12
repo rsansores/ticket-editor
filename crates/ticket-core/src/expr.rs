@@ -31,7 +31,7 @@ use serde_json::Value;
 use std::cell::Cell;
 
 use crate::data::{
-    compare_strs, is_empty_value, number_value, resolve_loop, to_number, value_to_string, LoopCtx,
+    compare_strs, is_empty_value, number_value, resolve_scoped, to_number, value_to_string, Scope,
 };
 
 /// Reject absurd formulas outright (this is a per-variable string a human types).
@@ -52,16 +52,47 @@ const MAX_ROWS: usize = 100_000;
 /// aggregates (`sumif(a, sumif(b, …) > 0, …)`) can't multiply into a stall.
 const MAX_TOTAL_ROWS: u64 = 2_000_000;
 
-/// Parse and evaluate `formula` against `root` in an optional loop context.
-/// `Ok` is the resulting value (possibly null); `Err` is a human-readable parse
-/// or structural error for the editor to show.
-pub fn eval_formula(formula: &str, root: &Value, loop_ctx: LoopCtx) -> Result<Value, String> {
+/// Parse and evaluate `formula` against `root` in a scope (optional loop
+/// binding plus optional `row.*` values) in one shot, with a fresh budget.
+/// Production paths compile once and reuse ([`compile`] + [`eval_compiled`]);
+/// this convenience remains for one-off evaluation and the test suite.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn eval_formula(formula: &str, root: &Value, scope: Scope) -> Result<Value, String> {
+    let compiled = compile(formula)?;
+    let budget = Cell::new(MAX_TOTAL_ROWS);
+    Ok(eval_compiled(&compiled, root, scope, &budget))
+}
+
+/// A parsed, reusable formula. Row-scoped formulas evaluate once per loop
+/// iteration — compiling once and evaluating the AST per row keeps a
+/// 100k-item loop from re-parsing its formulas 100k times.
+pub(crate) struct Compiled(Ast);
+
+/// Parse a formula into a reusable [`Compiled`] AST.
+pub(crate) fn compile(formula: &str) -> Result<Compiled, String> {
     if formula.len() > MAX_LEN {
         return Err(format!("formula too long (max {MAX_LEN} characters)"));
     }
-    let ast = parse(formula)?;
-    let budget = Cell::new(MAX_TOTAL_ROWS);
-    Ok(eval(&ast, root, loop_ctx, 0, &budget))
+    Ok(Compiled(parse(formula)?))
+}
+
+/// Evaluate a compiled formula, charging aggregate row scans to a
+/// caller-provided budget. Sharing one budget across every formula of every
+/// loop iteration is what bounds a whole render, not just a single formula —
+/// a hostile document can't multiply per-formula budgets into a stall.
+pub(crate) fn eval_compiled(
+    compiled: &Compiled,
+    root: &Value,
+    scope: Scope,
+    budget: &Cell<u64>,
+) -> Value {
+    eval(&compiled.0, root, scope, 0, budget)
+}
+
+/// The shared aggregate-row budget for one render or preview. Public to the
+/// crate so `render`/`data` can allocate one per top-level operation.
+pub(crate) fn fresh_budget() -> Cell<u64> {
+    Cell::new(MAX_TOTAL_ROWS)
 }
 
 // ---------------------------------------------------------------------------
@@ -509,7 +540,7 @@ impl Parser {
 // Evaluator
 // ---------------------------------------------------------------------------
 
-fn eval(ast: &Ast, root: &Value, ctx: LoopCtx, depth: usize, budget: &Cell<u64>) -> Value {
+fn eval(ast: &Ast, root: &Value, ctx: Scope, depth: usize, budget: &Cell<u64>) -> Value {
     if depth > MAX_NODES {
         return Value::Null;
     }
@@ -522,7 +553,7 @@ fn eval(ast: &Ast, root: &Value, ctx: LoopCtx, depth: usize, budget: &Cell<u64>)
         // stay empty so coalesce(), comparisons and aggregate filters behave
         // correctly. (A lone Variable element still fakes for a lively preview;
         // that happens in render.rs, not here.)
-        Ast::Var(path) => resolve_loop(ctx, root, path)
+        Ast::Var(path) => resolve_scoped(ctx, root, path)
             .cloned()
             .unwrap_or(Value::Null),
         Ast::Unary(UnOp::Neg, a) => match to_number(&eval(a, root, ctx, d, budget)) {
@@ -540,7 +571,7 @@ fn eval_bin(
     a: &Ast,
     b: &Ast,
     root: &Value,
-    ctx: LoopCtx,
+    ctx: Scope,
     d: usize,
     budget: &Cell<u64>,
 ) -> Value {
@@ -614,7 +645,7 @@ fn eval_call(
     f: Func,
     args: &[Ast],
     root: &Value,
-    ctx: LoopCtx,
+    ctx: Scope,
     d: usize,
     budget: &Cell<u64>,
 ) -> Value {
@@ -688,7 +719,7 @@ fn eval_aggregate(
     f: Func,
     args: &[Ast],
     root: &Value,
-    ctx: LoopCtx,
+    ctx: Scope,
     d: usize,
     budget: &Cell<u64>,
 ) -> Value {
@@ -709,7 +740,7 @@ fn eval_aggregate(
         _ => return Value::Null,
     };
     // Resolve the list by reference — no per-row clone. Absent → empty list.
-    let items: &[Value] = match resolve_loop(ctx, root, path) {
+    let items: &[Value] = match resolve_scoped(ctx, root, path) {
         Some(Value::Array(a)) => a.as_slice(),
         Some(_) => return Value::Null, // present but not a list
         None => &[],
@@ -728,7 +759,13 @@ fn eval_aggregate(
             break;
         }
         budget.set(remaining - 1);
-        let row_ctx: LoopCtx = Some((path, i, item));
+        // The aggregate's row becomes the loop binding; the surrounding band's
+        // `row.*` values stay visible (e.g. a filter comparing against
+        // `row.line_total` of the outer iteration).
+        let row_ctx = Scope {
+            loop_ctx: Some((path, i, item)),
+            row: ctx.row,
+        };
         if let Some(c) = cond {
             if !as_bool(&eval(c, root, row_ctx, d, budget)) {
                 continue;
@@ -766,7 +803,7 @@ mod tests {
     use serde_json::json;
 
     fn ev(formula: &str, data: &Value) -> Value {
-        eval_formula(formula, data, None).unwrap()
+        eval_formula(formula, data, Scope::default()).unwrap()
     }
 
     #[test]
@@ -838,16 +875,17 @@ mod tests {
 
     #[test]
     fn parse_errors_are_reported() {
-        assert!(eval_formula("1 +", &Value::Null, None).is_err());
-        assert!(eval_formula("foo(1)", &Value::Null, None).is_err()); // unknown function
-        assert!(eval_formula("(1 + 2", &Value::Null, None).is_err()); // unbalanced
-        assert!(eval_formula(r#""oops"#, &Value::Null, None).is_err()); // unterminated string
+        assert!(eval_formula("1 +", &Value::Null, Scope::default()).is_err());
+        assert!(eval_formula("foo(1)", &Value::Null, Scope::default()).is_err()); // unknown function
+        assert!(eval_formula("(1 + 2", &Value::Null, Scope::default()).is_err()); // unbalanced
+        assert!(eval_formula(r#""oops"#, &Value::Null, Scope::default()).is_err());
+        // unterminated string
     }
 
     #[test]
     fn deeply_nested_is_rejected_not_stack_overflow() {
         let bomb = "(".repeat(200);
-        assert!(eval_formula(&bomb, &Value::Null, None).is_err());
+        assert!(eval_formula(&bomb, &Value::Null, Scope::default()).is_err());
     }
 
     #[test]
@@ -859,9 +897,9 @@ mod tests {
             ev(r#"concat("café €", " ok")"#, &Value::Null),
             json!("café € ok")
         );
-        assert!(eval_formula("1 + €", &Value::Null, None).is_err()); // stray 3-byte char
-        assert!(eval_formula("😀", &Value::Null, None).is_err()); // stray 4-byte char
-        assert!(eval_formula("1 <€", &Value::Null, None).is_err()); // multibyte after an operator
+        assert!(eval_formula("1 + €", &Value::Null, Scope::default()).is_err()); // stray 3-byte char
+        assert!(eval_formula("😀", &Value::Null, Scope::default()).is_err()); // stray 4-byte char
+        assert!(eval_formula("1 <€", &Value::Null, Scope::default()).is_err()); // multibyte after an operator
     }
 
     #[test]
@@ -869,7 +907,7 @@ mod tests {
         // A chain longer than MAX_NODES must fail to PARSE with a clear error,
         // not parse-then-evaluate-to-blank.
         let terms = (0..2000).map(|_| "1").collect::<Vec<_>>().join(" + ");
-        assert!(eval_formula(&terms, &Value::Null, None).is_err());
+        assert!(eval_formula(&terms, &Value::Null, Scope::default()).is_err());
         // A reasonable-length chain still evaluates correctly.
         let ok = (0..40).map(|_| "1").collect::<Vec<_>>().join(" + ");
         assert_eq!(ev(&ok, &Value::Null), json!(40));

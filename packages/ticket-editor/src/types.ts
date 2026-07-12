@@ -30,7 +30,17 @@ export interface Region {
   end_row: number
   source?: string
   condition?: Condition
+  /** Row-scoped formulas, evaluated once per loop iteration; values land under
+   *  `row.<name>` for elements inside this band (e.g. `importe = volume * price`).
+   *  Looping bands also expose the implicit `row.index` / `row.number` /
+   *  `row.count` / `row.first` / `row.last` without declaring anything. */
+  computed?: Computed[]
 }
+
+/** `row.*` names every looping band provides implicitly — reserved, so a
+ *  declared calculated column may not use them. Mirror of the Rust
+ *  `RESERVED_ROW_NAMES`. */
+export const RESERVED_ROW_NAMES = ['index', 'number', 'count', 'first', 'last'] as const
 
 export interface Style {
   bold?: boolean
@@ -56,6 +66,18 @@ export interface TextKind {
   type: 'text'
   content: string
 }
+
+/** A zero-ink finishing marker (`cut`, `feed`, `beep`, `drawer`, or custom):
+ *  prints nothing; the backend receives it with its resolved row and maps it
+ *  to the device command its printer actually honors. */
+export interface MarkerKind {
+  type: 'marker'
+  name: string
+}
+
+/** The standardized marker intent names (mirror of Rust `MARKER_NAMES`).
+ *  Unknown names are allowed — consumers ignore what they can't do. */
+export const MARKER_NAMES = ['cut', 'feed', 'beep', 'drawer'] as const
 
 /** How a color image is reduced to 1-bit black/white for a thermal printer. */
 export type ImageMode = { kind: 'threshold'; level: number } | { kind: 'dither' }
@@ -103,15 +125,19 @@ export interface VariableKind {
   /** Reserved width in characters; the value is truncated/padded to this. */
   length: number
   align?: Align
-  /** Flow long values across multiple lines instead of truncating. */
+  /** Flow long values across multiple lines instead of truncating. Content
+   *  below moves down to make room. */
   wrap?: boolean
+  /** With `wrap`, keep at most this many lines (a longer value is cut with a
+   *  trailing `…`). Unset = unbounded. */
+  max_lines?: number
   /** Numeric formatting (mutually exclusive with dateFormat). */
   number?: NumberFormat
   /** Date reshaping pattern, e.g. `DD/MM/YYYY HH:mm`. */
   date_format?: string
 }
 
-export type ElementKind = TextKind | VariableKind | ImageKind | QrKind | BarcodeKind
+export type ElementKind = TextKind | VariableKind | ImageKind | QrKind | BarcodeKind | MarkerKind
 
 export interface Element {
   id: string
@@ -121,12 +147,15 @@ export interface Element {
   y_offset?: number
   style?: Style
   // ElementKind is flattened onto the element (serde `#[serde(flatten)]`).
-  type: 'text' | 'variable' | 'image' | 'qr' | 'barcode'
+  type: 'text' | 'variable' | 'image' | 'qr' | 'barcode' | 'marker'
   content?: string
+  // marker
+  name?: string
   path?: string
   length?: number
   align?: Align
   wrap?: boolean
+  max_lines?: number
   number?: NumberFormat
   date_format?: string
   // image

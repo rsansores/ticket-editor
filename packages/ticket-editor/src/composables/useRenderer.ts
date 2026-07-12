@@ -5,6 +5,8 @@ import init, {
   render_png,
   schema_version,
   preview_computed,
+  preview_row_computed,
+  unresolved_paths,
   register_font,
   has_font,
 } from '../wasm/ticket_wasm.js'
@@ -95,15 +97,32 @@ export async function ensureFontsLoaded(doc: TicketDoc): Promise<void> {
 }
 
 /**
- * Render a document to PNG bytes. `variables` may be omitted to get a preview
- * filled with deterministic fake data. Lazily loads any fonts the document uses.
+ * Render a document to PNG bytes. Lazily loads any fonts the document uses.
+ * The editor preview renders in placeholder mode (a variable missing from the
+ * sample data shows a deterministic fake); pass `placeholders: false` to see
+ * exactly what a backend print would produce (missing values render empty).
  * @throws the renderer's error message (bad doc, image too large, missing font, …)
  */
-export async function renderPng(doc: TicketDoc, variables?: unknown): Promise<Uint8Array> {
+export async function renderPng(
+  doc: TicketDoc,
+  variables?: unknown,
+  placeholders = true,
+): Promise<Uint8Array> {
   await ensureInit()
   await ensureFontsLoaded(doc)
   const varsJson = variables == null ? '' : JSON.stringify(variables)
-  return render_png(JSON.stringify(doc), varsJson)
+  return render_png(JSON.stringify(doc), varsJson, placeholders)
+}
+
+/**
+ * The variable paths a document references that don't resolve in the given
+ * data — duplicates removed, in document order. Backs the "N fields missing
+ * from your sample data" warning.
+ */
+export async function unresolvedPaths(doc: TicketDoc, variables?: unknown): Promise<string[]> {
+  await ensureInit()
+  const varsJson = variables == null ? '' : JSON.stringify(variables)
+  return JSON.parse(unresolved_paths(JSON.stringify(doc), varsJson)) as string[]
 }
 
 /**
@@ -138,4 +157,23 @@ export async function previewComputed(
   await ensureInit()
   const varsJson = variables == null ? '' : JSON.stringify(variables)
   return JSON.parse(preview_computed(JSON.stringify(computed), varsJson)) as ComputedResult[]
+}
+
+/**
+ * The row-scoped counterpart of `previewComputed`: evaluate a band's (draft)
+ * calculated columns against the band's FIRST data item, through the same
+ * engine that prints. `doc` supplies the doc-level `calc.*` values and the
+ * band's loop source; `computed` is the draft list being edited.
+ */
+export async function previewRowComputed(
+  doc: TicketDoc,
+  regionId: string,
+  computed: Computed[],
+  variables?: unknown,
+): Promise<ComputedResult[]> {
+  await ensureInit()
+  const varsJson = variables == null ? '' : JSON.stringify(variables)
+  return JSON.parse(
+    preview_row_computed(JSON.stringify(doc), regionId, JSON.stringify(computed), varsJson),
+  ) as ComputedResult[]
 }

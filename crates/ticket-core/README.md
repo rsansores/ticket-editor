@@ -18,9 +18,20 @@ what prints**.
 use ticket_core::{render_png, TicketDoc};
 
 let doc: TicketDoc = serde_json::from_str(stored_json)?;
-let png: Vec<u8> = render_png(&doc, &data)?;   // 1:1 with the browser preview
+let png: Vec<u8> = render_png(&doc, &data)?;   // same renderer as the browser preview
 // send `png` to your printer (CUPS, ESC/POS raster, …)
 ```
+
+One deliberate asymmetry: `render_png` runs in **print mode** — a variable path
+that doesn't resolve in `data` renders *empty*, so a typo or a null field can
+never print a plausible wrong value. The editor preview opts into *placeholder
+mode* (deterministic fake values for missing paths) so the canvas stays lively
+while designing; pass `RenderOptions::placeholders()` to
+`render_png_with_options` if you want that behavior natively. With fully
+resolved data the two modes are byte-for-byte identical. Use
+`TicketDoc::unresolved_paths(&data)` to reject a template that references
+fields your data doesn't have — the editor surfaces the same list while
+designing.
 
 Everything is measured in **character cells**, never raw pixels: a variable
 reserves a fixed number of columns and its value is truncated or padded to exactly
