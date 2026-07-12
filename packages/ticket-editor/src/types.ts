@@ -31,7 +31,7 @@ export interface Region {
   source?: string
   condition?: Condition
   /** Row-scoped formulas, evaluated once per loop iteration; values land under
-   *  `row.<name>` for elements inside this band (e.g. `importe = volume * price`).
+   *  `row.<name>` for elements inside this band (e.g. `line_total = qty * price`).
    *  Looping bands also expose the implicit `row.index` / `row.number` /
    *  `row.count` / `row.first` / `row.last` without declaring anything. */
   computed?: Computed[]

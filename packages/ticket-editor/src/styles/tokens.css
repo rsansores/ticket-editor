@@ -2,12 +2,12 @@
  * Theme contract.
  *
  * The editor never hard-codes colors. Every internal `--te-*` variable resolves
- * to a host design token (the shadcn names gaspar_vue already defines via
- * @quickedge/vue) and falls back to a neutral default when those tokens are
- * absent. Result:
- *   - Embedded in gaspar  -> inherits --color-primary etc.  -> looks native.
- *   - Standalone / OSS    -> uses the fallbacks below.       -> looks fine.
- * Zero dependency on @quickedge; the host needs no adapter.
+ * to a host design token (the shadcn-style names many host apps already
+ * define) and falls back to a neutral default when those tokens are absent.
+ * Result:
+ *   - Embedded in a themed host -> inherits --color-primary etc. -> looks native.
+ *   - Standalone / OSS          -> uses the fallbacks below.      -> looks fine.
+ * Zero dependency on the host's UI library; no adapter needed.
  */
 .te-root {
   --te-bg: var(--color-background, #ffffff);

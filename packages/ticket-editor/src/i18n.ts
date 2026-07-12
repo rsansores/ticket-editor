@@ -165,8 +165,7 @@ const en: MessageTable = {
   bandIf: '? if {cond}',
   // calculated columns (row-scoped, in the band drawer)
   bandCalcTitle: 'Calculated columns',
-  bandCalcEmpty:
-    'Compute a value per line — e.g. amount = volume × price — and place it as a column.',
+  bandCalcEmpty: 'Compute a value per line — e.g. amount = qty × price — and place it as a column.',
   bandCalcAdd: '+ New calculated column',
   bandCalcPlace: 'Place on the ticket',
   rowCalcNewTitle: 'New calculated column',
@@ -355,7 +354,7 @@ const es: MessageTable = {
   bandIf: '? si {cond}',
   bandCalcTitle: 'Columnas calculadas',
   bandCalcEmpty:
-    'Calcula un valor por línea — p. ej. importe = volumen × precio — y colócalo como columna.',
+    'Calcula un valor por línea — p. ej. importe = cantidad × precio — y colócalo como columna.',
   bandCalcAdd: '+ Nueva columna calculada',
   bandCalcPlace: 'Colocar en el ticket',
   rowCalcNewTitle: 'Nueva columna calculada',

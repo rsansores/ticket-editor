@@ -2,7 +2,7 @@
 // Right-drawer configuration for a flow band (loop / condition) — same place and
 // pattern as configuring an element, so there's no new mental model. Selected by
 // clicking the band's bar in the left lane. Loop bands also host their
-// "calculated columns" (row-scoped formulas like importe = volume × price),
+// "calculated columns" (row-scoped formulas like line_total = qty × price),
 // managed here and edited in the same dialog as doc-level calculated values.
 import { computed } from 'vue'
 import ConditionEditor from './ConditionEditor.vue'
