@@ -90,7 +90,23 @@ pub struct Region {
     /// holds; otherwise those rows collapse and content below flows up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<Condition>,
+    /// Row-scoped formulas, evaluated once per loop iteration (in declaration
+    /// order, like doc-level `computed`). Values land under `row.<name>` for
+    /// elements inside this band — e.g. `importe = round(volume * price, 2)`
+    /// gives every line its own amount column. On a conditional-only band
+    /// (`source: None`) they evaluate once when the band is shown. `row.*` never
+    /// resolves outside its own band. Empty (and absent from JSON) for a
+    /// document that doesn't use them, so v2 documents parse unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub computed: Vec<Computed>,
 }
+
+/// `row.*` names every looping band exposes implicitly (0-based `index`,
+/// 1-based `number`, total `count`, and `first`/`last` booleans). A declared
+/// [`Region::computed`] entry must not use these names — the editor rejects
+/// them at validation time, and the renderer ignores such an entry so the
+/// implicit value always wins deterministically.
+pub const RESERVED_ROW_NAMES: [&str; 5] = ["index", "number", "count", "first", "last"];
 
 /// A simple, non-programmer condition: `<var> <op> [value]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,9 +306,15 @@ pub enum ElementKind {
         #[serde(default)]
         align: Align,
         /// When true, a value wider than `length` flows onto extra lines
-        /// (word-aware) instead of being truncated.
+        /// (word-aware) instead of being truncated. Content below moves down to
+        /// make room (wrapped lines participate in the flow transform).
         #[serde(default)]
         wrap: bool,
+        /// With `wrap`, keep at most this many lines; a longer value is cut on
+        /// the last kept line with a trailing `…`. `None` = unbounded. Guards
+        /// against a 4 KB value producing a metre of paper.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_lines: Option<u32>,
         /// Numeric formatting (decimals, rounding, thousands). Mutually exclusive
         /// with `date_format`; if both are set, `number` wins.
         #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -65,6 +65,29 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
+/// Options controlling how a document is rendered.
+///
+/// `Default` is the **backend / real-print** configuration. The editor opts into
+/// placeholder mode explicitly.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct RenderOptions {
+    /// When true (the editor's live preview), a variable path that doesn't
+    /// resolve in the data renders a deterministic fake value so the canvas
+    /// looks alive before any real data exists. When false (the default — a
+    /// backend printing a real ticket), an unresolved path renders **empty**,
+    /// padded to its reserved width like any short value: a typo'd path or a
+    /// legitimately-null field must never print a believable wrong value.
+    pub placeholders: bool,
+}
+
+impl RenderOptions {
+    /// The editor-preview configuration (fake values for unresolved paths).
+    pub fn placeholders() -> Self {
+        RenderOptions { placeholders: true }
+    }
+}
+
 /// Hard ceiling on any single raster (the whole canvas, or one logo/QR block),
 /// in pixels (~64 megapixels). Bounds memory against adversarial documents.
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
@@ -103,7 +126,8 @@ struct RasterBlock {
     mask: Vec<bool>,
 }
 
-/// Render a document to PNG bytes using only the built-in font.
+/// Render a document to PNG bytes using only the built-in font and the default
+/// [`RenderOptions`] (real-print mode: unresolved paths render empty).
 pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderError> {
     render_png_with_fonts(doc, variables, Fonts::builtin_shared())
 }
@@ -112,11 +136,23 @@ pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderE
 /// default plus any families registered via [`Fonts::add_family`] (e.g. from
 /// lazily-loaded TTFs). Fails with [`RenderError::MissingFont`] if the document
 /// references a family the set doesn't contain, so a render never silently
-/// substitutes a font.
+/// substitutes a font. Uses the default [`RenderOptions`].
 pub fn render_png_with_fonts(
     doc: &TicketDoc,
     variables: &Value,
     fonts: &Fonts,
+) -> Result<Vec<u8>, RenderError> {
+    render_png_with_options(doc, variables, fonts, &RenderOptions::default())
+}
+
+/// Render a document to PNG bytes with explicit [`RenderOptions`]. The editor
+/// preview passes [`RenderOptions::placeholders`]; a backend printing real
+/// tickets uses the default.
+pub fn render_png_with_options(
+    doc: &TicketDoc,
+    variables: &Value,
+    fonts: &Fonts,
+    opts: &RenderOptions,
 ) -> Result<Vec<u8>, RenderError> {
     // Evaluate calculated variables once and expose them under `calc.*`, so every
     // downstream resolver (variables, QR-from-variable, conditions, loops) treats
@@ -128,31 +164,26 @@ pub fn render_png_with_fonts(
         merged = data::with_computed(variables, &doc.computed);
         &merged
     };
-    let (placements, blocks, total_rows) = lay_out(doc, variables, fonts)?;
+    let (placements, blocks, total_rows) = lay_out(doc, variables, fonts, opts)?;
     rasterize(doc, &placements, &blocks, total_rows, fonts)
 }
 
-/// A region resolved against the data: how many times it renders and how many
-/// rows it adds to (or removes from) everything below it.
-struct RegionPlan<'a> {
-    region: &'a crate::schema::Region,
-    height: u32,
-    /// Loop item count (1 for a plain conditional band that is shown, 0 if the
-    /// band is collapsed — condition false or an empty/absent loop source).
-    count: u32,
-    /// Extra rows added after `end_row`: `(count-1)*height`, or `-height` when the
-    /// band collapses.
-    delta_after: i64,
-}
-
 /// Stage 1: apply the flow transform (loops expand, conditional bands collapse,
-/// content below reflows) and expand every visible element into character
-/// placements. Returns the placements and the total grid rows needed.
+/// wrapped lines push content down, content below reflows) and expand every
+/// visible element into character placements. Returns the placements and the
+/// total grid rows needed.
+///
+/// The transform is a single top-down walk. `flow` carries the net rows
+/// everything at the current design position has been pushed down (+) or pulled
+/// up (−) by what's above it: loop repetitions, collapsed bands, and lines added
+/// by `wrap`. Because rows below never affect rows above, one pass suffices —
+/// region deltas and wrap deltas compose by simple accumulation.
 #[allow(clippy::type_complexity)]
 fn lay_out(
     doc: &TicketDoc,
     variables: &Value,
     fonts: &Fonts,
+    opts: &RenderOptions,
 ) -> Result<(Vec<Placement>, Vec<RasterBlock>, u32), RenderError> {
     let paper = &doc.paper;
     let content_cols = paper.content_cols();
@@ -163,68 +194,42 @@ fn lay_out(
     let cell_w64 = u64::from(cell_w);
     let cell_h64 = u64::from(cell_h);
 
-    // Resolve each band against the data (sorted by start so offsets accumulate).
+    // Bands sorted by start row; each element belongs to the band whose row
+    // range contains it, or to the free list. All lists ordered top-down so the
+    // walk accumulates offsets strictly downward.
     let mut regions: Vec<&crate::schema::Region> = doc.regions.iter().collect();
     regions.sort_by_key(|r| r.start_row);
-    let plans: Vec<RegionPlan> = regions
-        .iter()
-        .map(|region| {
-            let height = region.end_row.saturating_sub(region.start_row).max(1);
-            let enabled = region
-                .condition
-                .as_ref()
-                .map(|c| data::eval_condition(None, variables, c))
-                .unwrap_or(true);
-            let count = if !enabled {
-                0
-            } else if let Some(src) = &region.source {
-                match data::resolve(variables, src) {
-                    // Cap iterations so a giant data array can't explode memory.
-                    Some(Value::Array(a)) => a.len().min(MAX_LOOP as usize) as u32,
-                    _ => 0,
-                }
-            } else {
-                1
-            };
-            let delta_after = if count == 0 {
-                -i64::from(height)
-            } else {
-                (i64::from(count) - 1) * i64::from(height)
-            };
-            RegionPlan {
-                region,
-                height,
-                count,
-                delta_after,
-            }
-        })
-        .collect();
-
-    // Rows added/removed by every band whose end_row is at or above `row`.
-    let offset_before = |row: u32| -> i64 {
-        plans
+    let mut band_els: Vec<Vec<&Element>> = vec![Vec::new(); regions.len()];
+    let mut free_els: Vec<&Element> = Vec::new();
+    for el in &doc.elements {
+        match regions
             .iter()
-            .filter(|p| p.region.end_row <= row)
-            .map(|p| p.delta_after)
-            .sum()
-    };
-    // The band (if any) that captures a given design row.
-    let region_of = |row: u32| -> Option<&RegionPlan> {
-        plans
-            .iter()
-            .find(|p| row >= p.region.start_row && row < p.region.end_row)
-    };
+            .position(|r| el.row >= r.start_row && el.row < r.end_row)
+        {
+            Some(i) => band_els[i].push(el),
+            None => free_els.push(el),
+        }
+    }
+    free_els.sort_by_key(|e| e.row);
+    for v in &mut band_els {
+        v.sort_by_key(|e| e.row);
+    }
 
     let mut placements = Vec::new();
     let mut blocks: Vec<RasterBlock> = Vec::new();
     let mut max_bottom: i64 = 0; // lowest content row reached (absolute), exclusive
 
+    // Emit one element at an absolute base row. Returns the rows the element
+    // occupies BEYOND its design row (`(lines-1)*scale` for a wrapped variable,
+    // 0 for everything else) so the caller can push content below it down.
+    // Blocks with explicit cell heights (image/QR/barcode) return 0: their
+    // height is visible at design time, so the author reserves rows for them.
     let mut emit =
-        |el: &Element, loop_ctx: data::LoopCtx, base_row: i64| -> Result<(), RenderError> {
-            // Per-element condition (evaluated in the current context): hide in place.
+        |el: &Element, scope: data::Scope, base_row: i64| -> Result<u32, RenderError> {
+            // Per-element condition (evaluated in the current scope): hide in place.
             if let Some(c) = &el.condition {
-                if !data::eval_condition(loop_ctx, variables, c) {
-                    return Ok(());
+                if !data::eval_condition(scope, variables, c) {
+                    return Ok(0);
                 }
             }
             let y_off_px = el.y_offset * cell_h as f32;
@@ -251,7 +256,7 @@ fn lay_out(
                     // the placeholder frame below.
                     let resolved;
                     let src: &str = if *from_variable {
-                        resolved = match data::resolve_loop(loop_ctx, variables, data) {
+                        resolved = match data::resolve_scoped(scope, variables, data) {
                             Some(v) => data::value_to_string(v),
                             None => String::new(),
                         };
@@ -275,6 +280,7 @@ fn lay_out(
                         mask,
                     });
                     max_bottom = max_bottom.max(base_row + i64::from(*h));
+                    Ok(0)
                 }
                 ElementKind::Qr {
                     value,
@@ -282,10 +288,14 @@ fn lay_out(
                     size,
                 } => {
                     let text = if *from_variable {
-                        // The path may point at a calculated variable (`calc.*`),
-                        // e.g. a maps URL built from lat/lng — resolved like any other.
-                        match data::resolve_loop(loop_ctx, variables, value) {
+                        // The path may point at a calculated variable (`calc.*`)
+                        // or a row value — resolved like any other.
+                        match data::resolve_scoped(scope, variables, value) {
                             Some(v) => data::value_to_string(v),
+                            // Real print: a QR of a value that doesn't exist is
+                            // meaningless AND unscannable — draw nothing rather
+                            // than a placeholder frame on a customer's receipt.
+                            None if !opts.placeholders => return Ok(0),
                             None => data::fake_for(value),
                         }
                     } else {
@@ -310,6 +320,7 @@ fn lay_out(
                         mask,
                     });
                     max_bottom = max_bottom.max(base_row + i64::from(rows));
+                    Ok(0)
                 }
                 ElementKind::Barcode {
                     value,
@@ -319,8 +330,10 @@ fn lay_out(
                     height,
                 } => {
                     let text = if *from_variable {
-                        match data::resolve_loop(loop_ctx, variables, value) {
+                        match data::resolve_scoped(scope, variables, value) {
                             Some(v) => data::value_to_string(v),
+                            // Same as QR: no value → no barcode on a real print.
+                            None if !opts.placeholders => return Ok(0),
                             None => data::fake_for(value),
                         }
                     } else {
@@ -347,6 +360,7 @@ fn lay_out(
                         mask,
                     });
                     max_bottom = max_bottom.max(base_row + i64::from(*height));
+                    Ok(0)
                 }
                 _ => {
                     let scale = el.style.scale_clamped();
@@ -361,7 +375,7 @@ fn lay_out(
                     }
                     // One allocation per element; each glyph shares it via `Rc`.
                     let family: Option<std::rc::Rc<str>> = family.map(std::rc::Rc::from);
-                    let display = resolve_display(el, loop_ctx, variables);
+                    let display = resolve_display(el, scope, variables, opts);
                     let lines = fit_lines(el, &display, content_cols, scale);
                     for (li, line) in lines.iter().enumerate() {
                         let row = base_row + i64::from(li as u32 * scale);
@@ -383,54 +397,105 @@ fn lay_out(
                         }
                     }
                     max_bottom = max_bottom.max(base_row + i64::from(lines.len() as u32 * scale));
+                    // Every line past the first pushes content below down by
+                    // `scale` rows — the wrap half of the flow transform.
+                    Ok((lines.len() as u32).saturating_sub(1) * scale)
                 }
             }
-            Ok(())
         };
 
-    for el in &doc.elements {
-        match region_of(el.row) {
-            Some(plan) if plan.region.source.is_some() => {
-                // Loop band: render once per item, offset by the band height.
-                if plan.count == 0 {
-                    continue;
-                }
-                let Some(src) = plan.region.source.as_deref() else {
-                    continue;
-                };
-                let items = data::resolve(variables, src);
-                let base = mt as i64 + i64::from(el.row) + offset_before(plan.region.start_row);
-                for i in 0..plan.count {
-                    let item = items
-                        .and_then(|v| v.as_array())
-                        .and_then(|a| a.get(i as usize));
-                    let loop_ctx = item.map(|it| (src, i as usize, it));
-                    emit(el, loop_ctx, base + i64::from(i) * i64::from(plan.height))?;
-                }
+    // Emit a run of elements sharing one design row at an absolute base row;
+    // the row's wrap-extra is the MAX over its elements (two fields wrapping to
+    // 3 lines on the same row need 2 extra rows, not 4).
+    // Written as a macro because it must call `emit` (a capturing FnMut) —
+    // a second closure could not borrow it mutably at the same time.
+    macro_rules! emit_row_group {
+        ($els:expr, $j:ident, $scope:expr, $base:expr) => {{
+            let row = $els[$j].row;
+            let mut row_extra: u32 = 0;
+            while $j < $els.len() && $els[$j].row == row {
+                row_extra = row_extra.max(emit($els[$j], $scope, $base)?);
+                $j += 1;
             }
-            Some(plan) => {
-                // Conditional (non-loop) band: render only when shown.
-                if plan.count == 0 {
-                    continue;
-                }
-                emit(
-                    el,
-                    None,
-                    mt as i64 + i64::from(el.row) + offset_before(el.row),
-                )?;
-            }
-            None => {
-                emit(
-                    el,
-                    None,
-                    mt as i64 + i64::from(el.row) + offset_before(el.row),
-                )?;
-            }
+            row_extra
+        }};
+    }
+
+    // The top-down flow walk: interleave free rows and bands in design order.
+    let mut flow: i64 = 0;
+    let mut f = 0usize; // cursor into free_els
+    for (ri, region) in regions.iter().enumerate() {
+        // Free rows strictly above this band.
+        while f < free_els.len() && free_els[f].row < region.start_row {
+            let base = mt as i64 + i64::from(free_els[f].row) + flow;
+            flow += i64::from(emit_row_group!(free_els, f, data::Scope::default(), base));
         }
+
+        let height = region.end_row.saturating_sub(region.start_row).max(1);
+        let enabled = region
+            .condition
+            .as_ref()
+            .map(|c| data::eval_condition(data::Scope::default(), variables, c))
+            .unwrap_or(true);
+        // Loop items, capped so a giant data array can't explode the placement
+        // list before the pixel guard runs.
+        let items: Option<&[Value]> = region.source.as_deref().and_then(|s| {
+            match data::resolve(variables, s) {
+                Some(Value::Array(a)) => Some(&a[..a.len().min(MAX_LOOP as usize)]),
+                _ => None,
+            }
+        });
+        let count = if !enabled {
+            0
+        } else if region.source.is_some() {
+            items.map(|a| a.len()).unwrap_or(0)
+        } else {
+            1
+        };
+        if count == 0 {
+            // Collapsed band: rows vanish, content below flows up. Row formulas
+            // are never evaluated (no cost, no divide-by-zero on absent data).
+            flow -= i64::from(height);
+            continue;
+        }
+
+        let els = &band_els[ri];
+        let band_top = mt as i64 + i64::from(region.start_row) + flow;
+        let mut cursor = band_top;
+        for i in 0..count {
+            let loop_ctx: data::LoopCtx = items
+                .and_then(|a| a.get(i))
+                .and_then(|item| region.source.as_deref().map(|src| (src, i, item)));
+            // Row values: every loop iteration gets the implicit index/number/…;
+            // declared formulas evaluate on loop AND shown-conditional bands.
+            let row_vals: Option<Value> = (loop_ctx.is_some() || !region.computed.is_empty())
+                .then(|| data::eval_row(variables, &region.computed, loop_ctx, loop_ctx.map(|_| (i, count))));
+            let scope = data::Scope {
+                loop_ctx,
+                row: row_vals.as_ref(),
+            };
+            // Within one iteration, wrap extras shift this iteration's later
+            // rows down, exactly like free rows — so the iteration's height is
+            // its design height plus everything wrap inserted.
+            let mut iter_extra: i64 = 0;
+            let mut j = 0usize;
+            while j < els.len() {
+                let base = cursor + i64::from(els[j].row - region.start_row) + iter_extra;
+                iter_extra += i64::from(emit_row_group!(els, j, scope, base));
+            }
+            cursor += i64::from(height) + iter_extra;
+        }
+        // Net rows this band added versus its design height.
+        flow += (cursor - band_top) - i64::from(height);
+    }
+    // Free rows below the last band.
+    while f < free_els.len() {
+        let base = mt as i64 + i64::from(free_els[f].row) + flow;
+        flow += i64::from(emit_row_group!(free_els, f, data::Scope::default(), base));
     }
 
     // Total height honours trailing whitespace (min_rows) after the net flow delta.
-    let total_delta: i64 = plans.iter().map(|p| p.delta_after).sum();
+    let total_delta: i64 = flow;
     let design_floor = i64::from(mt) + i64::from(paper.min_rows.max(1)) + total_delta;
     let content_bottom = max_bottom.max(design_floor).max(i64::from(mt) + 1);
     let total_rows_i =
@@ -523,8 +588,12 @@ fn placeholder_mask(w: u32, h: u32) -> Vec<bool> {
 }
 
 /// Resolve an element to its final display string (variable lookup in the given
-/// loop context / faker, then number or date formatting).
-fn resolve_display(el: &Element, loop_ctx: data::LoopCtx, root: &Value) -> String {
+/// scope, then number or date formatting). An unresolved path renders empty
+/// unless `opts.placeholders` is on (editor preview), in which case a
+/// deterministic fake keeps the canvas lively. `row.*` paths never fake — a row
+/// value referenced outside its band is empty in every mode, so the editor
+/// can't paint a plausible value where print would show nothing.
+fn resolve_display(el: &Element, scope: data::Scope, root: &Value, opts: &RenderOptions) -> String {
     match &el.kind {
         // Static text renders verbatim. A value derived from other variables is
         // authored as a calculated variable and placed as a `Variable` element.
@@ -535,8 +604,10 @@ fn resolve_display(el: &Element, loop_ctx: data::LoopCtx, root: &Value) -> Strin
             date_format,
             ..
         } => {
-            let raw = match data::resolve_loop(loop_ctx, root, path) {
+            let row_scoped = path == "row" || path.starts_with("row.");
+            let raw = match data::resolve_scoped(scope, root, path) {
                 Some(v) => data::value_to_string(v),
+                None if !opts.placeholders || row_scoped => String::new(),
                 None => data::fake_for(path),
             };
             if let Some(nf) = number {
@@ -568,6 +639,7 @@ fn fit_lines(el: &Element, display: &str, content_cols: u32, scale: u32) -> Vec<
             length,
             align,
             wrap,
+            max_lines,
             ..
         } => {
             // The band width in characters: what was asked, capped to the columns
@@ -577,7 +649,24 @@ fn fit_lines(el: &Element, display: &str, content_cols: u32, scale: u32) -> Vec<
             let band = (*length as usize).clamp(1, cap);
 
             if *wrap {
-                wrap_text(display, band)
+                let mut lines = wrap_text(display, band);
+                // Bound a runaway value: keep at most `max_lines` lines and mark
+                // the cut with a trailing `…` on the last kept line.
+                if let Some(m) = max_lines {
+                    let m = (*m as usize).max(1);
+                    if lines.len() > m {
+                        lines.truncate(m);
+                        if let Some(last) = lines.last_mut() {
+                            let mut chars: Vec<char> = last.chars().collect();
+                            if chars.len() >= band {
+                                chars.truncate(band.saturating_sub(1));
+                            }
+                            chars.push('…');
+                            *last = chars.into_iter().collect();
+                        }
+                    }
+                }
+                lines
                     .into_iter()
                     .map(|line| fit_to_width(&line, band, *align))
                     .collect()

@@ -1,5 +1,8 @@
 use serde_json::json;
-use ticket_core::{render_png, render_png_with_fonts, FontFaces, Fonts, RenderError, TicketDoc};
+use ticket_core::{
+    render_png, render_png_with_fonts, render_png_with_options, FontFaces, Fonts, RenderError,
+    RenderOptions, TicketDoc,
+};
 
 fn sample_doc() -> TicketDoc {
     serde_json::from_value(json!({
@@ -50,6 +53,125 @@ fn real_data_beats_fake() {
     let with_fake = render_png(&doc, &serde_json::Value::Null).unwrap();
     // The amount slot differs, so the rasters must differ.
     assert_ne!(with_data, with_fake);
+}
+
+#[test]
+fn unresolved_path_renders_empty_by_default_and_fake_in_placeholder_mode() {
+    // Print mode (default): a path that doesn't resolve renders EMPTY — a typo'd
+    // path must never print a believable wrong number on a customer's receipt.
+    // Editor mode (placeholders): the same path renders a deterministic fake.
+    let doc = sample_doc(); // references sale.total_amount
+    let fonts = &Fonts::builtin().unwrap();
+    let empty_data = json!({ "sale": {} });
+
+    let print = render_png_with_options(&doc, &empty_data, fonts, &RenderOptions::default())
+        .unwrap();
+    let editor =
+        render_png_with_options(&doc, &empty_data, fonts, &RenderOptions::placeholders()).unwrap();
+    assert_ne!(
+        print, editor,
+        "placeholder mode must draw a fake where print mode draws nothing"
+    );
+
+    // Print mode with a missing field equals print mode with an explicitly empty
+    // one — i.e. the missing path contributed NO ink.
+    let explicit_blank = render_png_with_options(
+        &doc,
+        &json!({ "sale": { "total_amount": "" } }),
+        fonts,
+        &RenderOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        print, explicit_blank,
+        "an unresolved path must render exactly like an empty value"
+    );
+}
+
+#[test]
+fn qr_and_barcode_from_missing_variable_draw_nothing_on_print() {
+    // A QR/barcode bound to a variable that doesn't resolve: print mode draws
+    // nothing (an unscannable placeholder frame would be garbage on a receipt);
+    // placeholder mode still draws the fake so the editor canvas stays lively.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24, "min_rows": 14 },
+        "elements": [
+            { "id": "q", "row": 0, "col": 0, "type": "qr", "value": "missing.url",
+              "from_variable": true, "size": 10 },
+            { "id": "b", "row": 11, "col": 0, "type": "barcode", "value": "missing.code",
+              "from_variable": true, "width": 20, "height": 3 }
+        ]
+    }))
+    .unwrap();
+    let blank: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24, "min_rows": 14 }, "elements": []
+    }))
+    .unwrap();
+    let fonts = &Fonts::builtin().unwrap();
+    let print =
+        render_png_with_options(&doc, &json!({}), fonts, &RenderOptions::default()).unwrap();
+    let empty_doc =
+        render_png_with_options(&blank, &json!({}), fonts, &RenderOptions::default()).unwrap();
+    assert_eq!(print, empty_doc, "no value → no QR/barcode ink on print");
+    let editor =
+        render_png_with_options(&doc, &json!({}), fonts, &RenderOptions::placeholders()).unwrap();
+    assert_ne!(editor, print, "editor preview still draws fakes");
+}
+
+#[test]
+fn unresolved_paths_reports_typos_and_respects_scopes() {
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 40 },
+        "computed": [{ "name": "total", "formula": "sale.subtotal + sale.tax" }],
+        "regions": [
+            { "id": "loop", "start_row": 2, "end_row": 3, "source": "movements" },
+            { "id": "gone", "start_row": 5, "end_row": 6, "source": "nope.items" }
+        ],
+        "elements": [
+            { "id": "ok",   "row": 0, "col": 0, "type": "variable", "path": "sale.customer", "length": 10 },
+            { "id": "typo", "row": 0, "col": 12, "type": "variable", "path": "sale.totl", "length": 10 },
+            { "id": "calc", "row": 1, "col": 0, "type": "variable", "path": "calc.total", "length": 10 },
+            // Inside the loop: a real item field, a typo'd one, and implicit row vars.
+            { "id": "vol",  "row": 2, "col": 0, "type": "variable", "path": "volume", "length": 8 },
+            { "id": "oops", "row": 2, "col": 10, "type": "variable", "path": "volumen", "length": 8 },
+            { "id": "n",    "row": 2, "col": 20, "type": "variable", "path": "row.number", "length": 3 },
+            { "id": "bad",  "row": 2, "col": 24, "type": "variable", "path": "row.importe", "length": 8 },
+            // row.* outside any band never resolves.
+            { "id": "out",  "row": 4, "col": 0, "type": "variable", "path": "row.number", "length": 3 },
+            // Inside the dead band: unverifiable, must NOT add noise.
+            { "id": "dead", "row": 5, "col": 0, "type": "variable", "path": "whatever", "length": 5 },
+            // is_set conditions probe absent fields legitimately — not reported.
+            { "id": "cond", "row": 7, "col": 0, "type": "text", "content": "X",
+              "condition": { "var": "sale.maybe", "op": "is_set", "value": "" } },
+            { "id": "cond2", "row": 8, "col": 0, "type": "text", "content": "Y",
+              "condition": { "var": "sale.misspelt", "op": "eq", "value": "1" } }
+        ]
+    }))
+    .unwrap();
+    let vars = json!({
+        "sale": { "subtotal": 10, "tax": 1.6, "customer": "ACME" },
+        "movements": [ { "volume": 5.0, "price": 21.5 } ]
+    });
+    let missing = doc.unresolved_paths(&vars);
+    assert_eq!(
+        missing,
+        vec![
+            "nope.items".to_string(),
+            "sale.totl".to_string(),
+            "volumen".to_string(),
+            "row.importe".to_string(),
+            "row.number".to_string(),
+            "sale.misspelt".to_string(),
+        ]
+    );
+    // A declared row-computed makes row.importe valid inside its band.
+    let mut with_row: TicketDoc = doc;
+    with_row.regions[0].computed = vec![ticket_core::Computed {
+        name: "importe".into(),
+        formula: "volume * price".into(),
+    }];
+    let missing = with_row.unresolved_paths(&vars);
+    assert!(!missing.contains(&"row.importe".to_string()));
 }
 
 #[test]
@@ -603,4 +725,433 @@ fn reserved_width_never_overflows() {
     )
     .unwrap();
     assert_eq!(&png[0..4], &[0x89, b'P', b'N', b'G']);
+}
+
+// ---------------------------------------------------------------------------
+// Region.computed → row.* (per-iteration values inside a loop band)
+// ---------------------------------------------------------------------------
+
+/// A GasPAR-style sale: a movements loop with VOL, PRECIO and a row-computed
+/// IMPORTE column, plus a doc-level total below the band.
+fn row_computed_doc() -> TicketDoc {
+    serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 40 },
+        "computed": [{ "name": "total", "formula": "sum(movements, volume * price)" }],
+        "regions": [{
+            "id": "movs", "start_row": 1, "end_row": 2, "source": "movements",
+            "computed": [
+                { "name": "importe", "formula": "round(volume * price, 2)" },
+                // References an earlier row-computed of the same band.
+                { "name": "importe_iva", "formula": "round(row.importe * 1.16, 2)" }
+            ]
+        }],
+        "elements": [
+            { "id": "hdr", "row": 0, "col": 0, "type": "text", "content": "VOL   PRECIO   IMPORTE" },
+            { "id": "n",   "row": 1, "col": 0, "type": "variable", "path": "row.number", "length": 2 },
+            { "id": "v",   "row": 1, "col": 3, "type": "variable", "path": "volume", "length": 6,
+              "number": { "decimals": 2, "rounding": "half_up", "thousands": false } },
+            { "id": "p",   "row": 1, "col": 10, "type": "variable", "path": "price", "length": 7,
+              "number": { "decimals": 2, "rounding": "half_up", "thousands": false } },
+            { "id": "amt", "row": 1, "col": 18, "type": "variable", "path": "row.importe", "length": 10,
+              "align": "right",
+              "number": { "decimals": 2, "rounding": "half_up", "thousands": true } },
+            { "id": "iva", "row": 1, "col": 29, "type": "variable", "path": "row.importe_iva", "length": 10,
+              "align": "right" },
+            { "id": "tot", "row": 2, "col": 18, "type": "variable", "path": "calc.total", "length": 10,
+              "align": "right",
+              "number": { "decimals": 2, "rounding": "half_up", "thousands": true } }
+        ]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn row_computed_single_item_has_correct_value() {
+    // One item: row.importe = 5 * 20 = 100. The render must equal a doc where
+    // the same cell holds a plain item field with value 100 — i.e. the computed
+    // value is REAL data to the renderer, not a special case.
+    let doc = row_computed_doc();
+    let by_formula = render_png(
+        &doc,
+        &json!({ "movements": [ { "volume": 5, "price": 20 } ] }),
+    )
+    .unwrap();
+    // Same doc, but importe comes precomputed in the data and the element binds
+    // to it directly.
+    let mut direct: TicketDoc = row_computed_doc();
+    direct.regions[0].computed = vec![serde_json::from_value::<ticket_core::Computed>(
+        json!({ "name": "importe_iva", "formula": "round(importe * 1.16, 2)" })).unwrap()];
+    // rebind row.importe -> importe (denormalized into the item)
+    let doc_json = serde_json::to_string(&direct).unwrap().replace("row.importe\"", "importe\"");
+    let direct: TicketDoc = serde_json::from_str(&doc_json).unwrap();
+    let denormalized = render_png(
+        &direct,
+        &json!({ "movements": [ { "volume": 5, "price": 20, "importe": 100 } ] }),
+    )
+    .unwrap();
+    assert_eq!(by_formula, denormalized, "row.importe must render like real item data");
+}
+
+#[test]
+fn row_computed_three_items_get_distinct_values_in_order() {
+    // The bug class here is computing once and reusing: three items must render
+    // three DISTINCT amounts, in item order. Swap two items -> different raster.
+    let doc = row_computed_doc();
+    let data = json!({ "movements": [
+        { "volume": 1, "price": 10 },
+        { "volume": 2, "price": 10 },
+        { "volume": 3, "price": 10 }
+    ]});
+    let swapped = json!({ "movements": [
+        { "volume": 2, "price": 10 },
+        { "volume": 1, "price": 10 },
+        { "volume": 3, "price": 10 }
+    ]});
+    let a = render_png(&doc, &data).unwrap();
+    let b = render_png(&doc, &swapped).unwrap();
+    assert_ne!(a, b, "per-row values must follow item order, not repeat");
+}
+
+#[test]
+fn row_formula_mixes_calc_and_root_paths() {
+    // A row formula referencing calc.* and an absolute root path together.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 32 },
+        "computed": [{ "name": "rate", "formula": "0.16" }],
+        "regions": [{
+            "id": "r", "start_row": 0, "end_row": 1, "source": "items",
+            "computed": [{ "name": "tax", "formula": "round(amount * calc.rate + shipping.flat, 2)" }]
+        }],
+        "elements": [
+            { "id": "t", "row": 0, "col": 0, "type": "variable", "path": "row.tax", "length": 10 }
+        ]
+    }))
+    .unwrap();
+    let a = render_png(&doc, &json!({ "shipping": { "flat": 5 }, "items": [ { "amount": 100 } ] })).unwrap();
+    let b = render_png(&doc, &json!({ "shipping": { "flat": 9 }, "items": [ { "amount": 100 } ] })).unwrap();
+    assert_ne!(a, b, "root path inside a row formula must be live");
+}
+
+#[test]
+fn row_paths_outside_a_band_render_empty_never_fake() {
+    // row.* referenced from an element OUTSIDE any band → empty, in BOTH modes.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "elements": [
+            { "id": "x", "row": 0, "col": 0, "type": "variable", "path": "row.importe", "length": 10 }
+        ]
+    }))
+    .unwrap();
+    let blank: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 }, "elements": [] })).unwrap();
+    let fonts = &Fonts::builtin().unwrap();
+    for opts in [RenderOptions::default(), RenderOptions::placeholders()] {
+        let with_el = render_png_with_options(&doc, &json!({}), fonts, &opts).unwrap();
+        let without = render_png_with_options(&blank, &json!({}), fonts, &opts).unwrap();
+        assert_eq!(
+            with_el, without,
+            "row.* outside a band must contribute no ink (placeholders={})",
+            opts.placeholders
+        );
+    }
+}
+
+#[test]
+fn collapsed_band_never_evaluates_row_formulas() {
+    // Band collapsed by its condition → row formulas never run: a formula that
+    // would divide by zero on absent data must not affect the render.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "regions": [{
+            "id": "r", "start_row": 0, "end_row": 1, "source": "items",
+            "condition": { "var": "show", "op": "eq", "value": "1" },
+            "computed": [{ "name": "boom", "formula": "1 / divisor" }]
+        }],
+        "elements": [
+            { "id": "b", "row": 0, "col": 0, "type": "variable", "path": "row.boom", "length": 8 },
+            { "id": "t", "row": 1, "col": 0, "type": "text", "content": "FOOTER" }
+        ]
+    }))
+    .unwrap();
+    // Collapsed (condition false): renders fine, footer flows up.
+    let collapsed = render_png(&doc, &json!({ "show": 0, "items": [ { "divisor": 0 } ] })).unwrap();
+    let no_band: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "elements": [ { "id": "t", "row": 0, "col": 0, "type": "text", "content": "FOOTER" } ]
+    }))
+    .unwrap();
+    let flowed_up = render_png(&no_band, &json!({})).unwrap();
+    assert_eq!(collapsed, flowed_up, "collapsed band leaves no trace");
+}
+
+#[test]
+fn implicit_row_vars_drive_element_conditions() {
+    // row.number prints line numbers; row.last drives a condition that shows a
+    // marker only on the final line. 2 items vs 3 items must differ beyond just
+    // height; the marker must appear exactly once (asserted indirectly: a doc
+    // whose marker condition is row.first renders differently from row.last for
+    // 2+ items, identically for 1).
+    let doc = |cond_var: &str| -> TicketDoc {
+        serde_json::from_value(json!({
+            "version": 2, "paper": { "width_chars": 24 },
+            "regions": [{ "id": "r", "start_row": 0, "end_row": 1, "source": "items" }],
+            "elements": [
+                { "id": "n", "row": 0, "col": 0, "type": "variable", "path": "row.number", "length": 3 },
+                { "id": "m", "row": 0, "col": 4, "type": "text", "content": "<<",
+                  "condition": { "var": cond_var, "op": "eq", "value": "true" } }
+            ]
+        }))
+        .unwrap()
+    };
+    let one = json!({ "items": [ {} ] });
+    let many = json!({ "items": [ {}, {}, {} ] });
+    assert_eq!(
+        render_png(&doc("row.first"), &one).unwrap(),
+        render_png(&doc("row.last"), &one).unwrap(),
+        "single item: first == last"
+    );
+    assert_ne!(
+        render_png(&doc("row.first"), &many).unwrap(),
+        render_png(&doc("row.last"), &many).unwrap(),
+        "3 items: the marker sits on a different line for first vs last"
+    );
+}
+
+#[test]
+fn conditional_band_evaluates_declared_row_values_once() {
+    // A conditional-only band (no source) with a declared row-computed: it
+    // evaluates once when the band shows.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 30 },
+        "regions": [{
+            "id": "c", "start_row": 0, "end_row": 1,
+            "condition": { "var": "sale.change", "op": "gt", "value": "0" },
+            "computed": [{ "name": "line", "formula": "concat(\"CAMBIO: \", sale.change)" }]
+        }],
+        "elements": [
+            { "id": "l", "row": 0, "col": 0, "type": "variable", "path": "row.line", "length": 20 }
+        ]
+    }))
+    .unwrap();
+    let a = render_png(&doc, &json!({ "sale": { "change": 12 } })).unwrap();
+    let b = render_png(&doc, &json!({ "sale": { "change": 34 } })).unwrap();
+    assert_ne!(a, b, "the declared row value must be live on a conditional band");
+}
+
+// ---------------------------------------------------------------------------
+// wrap: true participates in the flow transform (no more overprint)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wrapped_lines_push_content_below_down() {
+    // The GasPAR field bug: a long customer name in a wrapped `length: 39`
+    // field at row 0, ">> FACTURA SOLICITADA <<" at row 1. With the fix the
+    // marker moves DOWN one row instead of being overprinted. Asserted exactly:
+    // the render equals a doc with the two wrapped lines as static text at rows
+    // 0-1 and the marker at row 2 (alignment padding draws no ink).
+    let wrapped: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 44 },
+        "elements": [
+            { "id": "c", "row": 0, "col": 0, "type": "variable", "path": "customer",
+              "length": 39, "wrap": true },
+            { "id": "m", "row": 1, "col": 0, "type": "text",
+              "content": ">> FACTURA SOLICITADA <<" }
+        ]
+    }))
+    .unwrap();
+    let expected: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 44 },
+        "elements": [
+            { "id": "l1", "row": 0, "col": 0, "type": "text",
+              "content": "Transportes y Mudanzas del Bajio SA de" },
+            { "id": "l2", "row": 1, "col": 0, "type": "text", "content": "CV" },
+            { "id": "m", "row": 2, "col": 0, "type": "text",
+              "content": ">> FACTURA SOLICITADA <<" }
+        ]
+    }))
+    .unwrap();
+    let data = json!({ "customer": "Transportes y Mudanzas del Bajio SA de CV" });
+    assert_eq!(
+        render_png(&wrapped, &data).unwrap(),
+        render_png(&expected, &json!({})).unwrap(),
+        "a 2-line wrap must push the next row down by exactly 1 (no overprint)"
+    );
+    // A short (single-line) value leaves the design untouched: marker stays at row 1.
+    let untouched: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 44 },
+        "elements": [
+            { "id": "l1", "row": 0, "col": 0, "type": "text", "content": "ACME" },
+            { "id": "m", "row": 1, "col": 0, "type": "text",
+              "content": ">> FACTURA SOLICITADA <<" }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        render_png(&wrapped, &json!({ "customer": "ACME" })).unwrap(),
+        render_png(&untouched, &json!({})).unwrap(),
+        "a single-line value must not move anything"
+    );
+}
+
+#[test]
+fn two_wrapped_elements_on_one_row_push_by_the_max() {
+    // Elements wrapping to 2 and 3 lines on the same row: the next row moves by
+    // 2 (max-1), not 3 (sum-1).
+    let wrapped: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 40 },
+        "elements": [
+            { "id": "a", "row": 0, "col": 0, "type": "variable", "path": "x",
+              "length": 10, "wrap": true },
+            { "id": "b", "row": 0, "col": 12, "type": "variable", "path": "y",
+              "length": 10, "wrap": true },
+            { "id": "m", "row": 1, "col": 0, "type": "text", "content": "MARK" }
+        ]
+    }))
+    .unwrap();
+    // x → "aaaa aaaa" / "bbbb"; y → "cccc cccc" / "dddd dddd" / "eeee".
+    let data = json!({ "x": "aaaa aaaa bbbb", "y": "cccc cccc dddd dddd eeee" });
+    let expected: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 40 },
+        "elements": [
+            { "id": "x1", "row": 0, "col": 0, "type": "text", "content": "aaaa aaaa" },
+            { "id": "x2", "row": 1, "col": 0, "type": "text", "content": "bbbb" },
+            { "id": "y1", "row": 0, "col": 12, "type": "text", "content": "cccc cccc" },
+            { "id": "y2", "row": 1, "col": 12, "type": "text", "content": "dddd dddd" },
+            { "id": "y3", "row": 2, "col": 12, "type": "text", "content": "eeee" },
+            { "id": "m", "row": 3, "col": 0, "type": "text", "content": "MARK" }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        render_png(&wrapped, &data).unwrap(),
+        render_png(&expected, &json!({})).unwrap(),
+        "same-row wraps compose by MAX, not sum"
+    );
+}
+
+#[test]
+fn wrap_inside_a_loop_band_shifts_later_iterations() {
+    // Item 2's long name pushes items 3..n down: the band height is
+    // per-iteration. Equivalent check: [long, short] vs [short, long] renders
+    // differently (the wrapped row sits at a different y), and both are taller
+    // than [short, short].
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "regions": [{ "id": "r", "start_row": 0, "end_row": 1, "source": "items" }],
+        "elements": [
+            { "id": "n", "row": 0, "col": 0, "type": "variable", "path": "name",
+              "length": 12, "wrap": true },
+            { "id": "f", "row": 1, "col": 0, "type": "text", "content": "FOOTER" }
+        ]
+    }))
+    .unwrap();
+    let long = "un nombre muy largo que se envuelve";
+    let hi = |names: &[&str]| {
+        let items: Vec<_> = names.iter().map(|n| json!({ "name": n })).collect();
+        render_png(&doc, &json!({ "items": items })).unwrap()
+    };
+    let long_first = hi(&[long, "corto"]);
+    let long_second = hi(&["corto", long]);
+    let both_short = hi(&["corto", "corto"]);
+    assert_ne!(long_first, long_second, "which iteration wraps must matter");
+    assert!(long_first.len() != both_short.len() || long_first != both_short);
+    // Total band height is iteration-additive: [long, long] is taller than
+    // [long, short], which is taller than [short, short].
+    let both_long = hi(&[long, long]);
+    let h = |png: &[u8]| {
+        // PNG IHDR height: bytes 20..24 big-endian.
+        u32::from_be_bytes([png[20], png[21], png[22], png[23]])
+    };
+    assert!(h(&long_first) > h(&both_short));
+    assert!(h(&both_long) > h(&long_first));
+}
+
+#[test]
+fn wrap_and_region_collapse_compose() {
+    // A wrapped field at row 0 (+1 row), a collapsible band at row 1 (−1 when
+    // hidden), a footer at row 2. Both active: the deltas cancel and the footer
+    // lands back at its design row, with the wrap's second line where the band
+    // used to be.
+    let doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "regions": [{ "id": "c", "start_row": 1, "end_row": 2,
+                      "condition": { "var": "show", "op": "eq", "value": "1" } }],
+        "elements": [
+            { "id": "w", "row": 0, "col": 0, "type": "variable", "path": "note",
+              "length": 10, "wrap": true },
+            { "id": "b", "row": 1, "col": 0, "type": "text", "content": "BAND" },
+            { "id": "f", "row": 2, "col": 0, "type": "text", "content": "FOOTER" }
+        ]
+    }))
+    .unwrap();
+    let expected: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 24 },
+        "elements": [
+            { "id": "l1", "row": 0, "col": 0, "type": "text", "content": "aaaa aaaa" },
+            { "id": "l2", "row": 1, "col": 0, "type": "text", "content": "bbbb" },
+            { "id": "f", "row": 2, "col": 0, "type": "text", "content": "FOOTER" }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        render_png(&doc, &json!({ "show": 0, "note": "aaaa aaaa bbbb" })).unwrap(),
+        render_png(&expected, &json!({})).unwrap(),
+        "wrap (+1) and collapse (−1) must compose"
+    );
+}
+
+#[test]
+fn scaled_wrap_pushes_by_scale_per_extra_line() {
+    // scale: 2 + wrap: each wrapped line is 2 rows tall. A 2-line value's
+    // second line starts 2 rows down, and the next element moves down 2 rows.
+    let wrapped: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 40 },
+        "elements": [
+            { "id": "w", "row": 0, "col": 0, "type": "variable", "path": "x",
+              "length": 8, "wrap": true, "style": { "scale": 2 } },
+            { "id": "m", "row": 2, "col": 0, "type": "text", "content": "MARK" }
+        ]
+    }))
+    .unwrap();
+    // x → "aaaa aaa" / "bbbb" at scale 2: line 2 occupies rows 2-3, marker → row 4.
+    let expected: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 40 },
+        "elements": [
+            { "id": "l1", "row": 0, "col": 0, "type": "text", "content": "aaaa aaa",
+              "style": { "scale": 2 } },
+            { "id": "l2", "row": 2, "col": 0, "type": "text", "content": "bbbb",
+              "style": { "scale": 2 } },
+            { "id": "m", "row": 4, "col": 0, "type": "text", "content": "MARK" }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        render_png(&wrapped, &json!({ "x": "aaaa aaa bbbb" })).unwrap(),
+        render_png(&expected, &json!({})).unwrap(),
+        "one extra wrapped line at scale 2 = 2 rows of push"
+    );
+}
+
+#[test]
+fn max_lines_truncates_with_ellipsis() {
+    let make = |max: Option<u32>| -> TicketDoc {
+        let mut el = json!({ "id": "w", "row": 0, "col": 0, "type": "variable",
+                             "path": "x", "length": 10, "wrap": true });
+        if let Some(m) = max { el["max_lines"] = json!(m); }
+        serde_json::from_value(json!({
+            "version": 2, "paper": { "width_chars": 24 },
+            "elements": [ el, { "id": "m", "row": 1, "col": 0, "type": "text", "content": "MARK" } ]
+        }))
+        .unwrap()
+    };
+    let data = json!({ "x": "aaaa bbbb cccc dddd eeee ffff" }); // many lines
+    let unbounded = render_png(&make(None), &data).unwrap();
+    let bounded = render_png(&make(Some(2)), &data).unwrap();
+    assert_ne!(unbounded, bounded, "max_lines must cut the value");
+    let h = |png: &[u8]| u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+    assert!(h(&unbounded) > h(&bounded), "bounded wrap must be shorter");
+    // The bounded render still differs from a hard 2-line value without the
+    // ellipsis — i.e. the `…` is actually drawn.
+    let two_lines_exact = render_png(&make(Some(2)), &json!({ "x": "aaaa bbbb cccc" })).unwrap();
+    assert_ne!(bounded, two_lines_exact);
 }
