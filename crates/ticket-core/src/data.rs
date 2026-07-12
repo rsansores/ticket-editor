@@ -73,6 +73,26 @@ pub fn resolve_loop<'a>(loop_ctx: LoopCtx<'a>, root: &'a Value, path: &str) -> O
     resolve(root, path)
 }
 
+/// Resolve a path to its display string, applying the placeholder policy in
+/// ONE place for every element kind (variable, QR, barcode, image):
+///   * resolved → its string (JSON null → empty, like everywhere else);
+///   * missing + placeholder mode → a deterministic fake — EXCEPT `row.*`,
+///     which never fakes, so a row value referenced outside its band looks
+///     exactly as empty in the editor as it prints on paper;
+///   * missing otherwise → `None`: the caller draws nothing.
+pub(crate) fn resolve_or_fake(
+    scope: Scope,
+    root: &Value,
+    path: &str,
+    placeholders: bool,
+) -> Option<String> {
+    if let Some(v) = resolve_scoped(scope, root, path) {
+        return Some(value_to_string(v));
+    }
+    let row_scoped = path == "row" || path.starts_with("row.");
+    (placeholders && !row_scoped).then(|| fake_for(path))
+}
+
 /// Evaluate a condition in a scope (loop item + row values). Inside a loop band
 /// this lets a condition target `row.last`, `row.number`, or a row-computed
 /// value as naturally as a data field.
@@ -148,6 +168,11 @@ pub fn value_to_string(v: &Value) -> String {
 /// Adversarial-input cap: at most this many computed variables per document.
 const MAX_COMPUTED: usize = 256;
 
+/// Hard ceiling on loop iterations — shared by the renderer's flow walk and
+/// `preview_row`, so the editor's `row.count` / `row.last` chips agree with
+/// what actually prints when a data array exceeds the cap.
+pub(crate) const MAX_LOOP: usize = 100_000;
+
 /// Return a clone of the variable data `root` with every calculated variable
 /// merged in under the `calc` key — the working data the renderer resolves
 /// against. Call once per render when `computed` is non-empty; after this a
@@ -197,14 +222,19 @@ fn eval_all(root: &Value, computed: &[Computed]) -> Vec<ComputedReport> {
     let mut working = overlay_calc(root, Value::Object(serde_json::Map::new()));
     let mut calc = serde_json::Map::new();
     let mut out = Vec::new();
+    let budget = crate::expr::fresh_budget();
     for c in computed.iter().take(MAX_COMPUTED) {
         // Expose the values computed so far so this formula can build on them.
         if let Value::Object(m) = &mut working {
             m.insert("calc".to_string(), Value::Object(calc.clone()));
         }
-        let (value, error) = match crate::expr::eval_formula(&c.formula, &working, Scope::default())
-        {
-            Ok(v) => (v, None),
+        // One budget across ALL doc-level formulas: aggregates can't multiply
+        // per-formula allowances into a stall.
+        let (value, error) = match crate::expr::compile(&c.formula) {
+            Ok(ast) => (
+                crate::expr::eval_compiled(&ast, &working, Scope::default(), &budget),
+                None,
+            ),
             Err(e) => (Value::Null, Some(e)),
         };
         calc.insert(c.name.clone(), value.clone());
@@ -217,26 +247,33 @@ fn eval_all(root: &Value, computed: &[Computed]) -> Vec<ComputedReport> {
     out
 }
 
-/// Evaluate a band's row-scoped formulas for **one iteration**, returning the
-/// object exposed as `row` to elements inside the band.
-///
-/// `iter` is `Some((index, count))` on a looping band — it fills the implicit
-/// `index` / `number` / `count` / `first` / `last` — and `None` on a
-/// conditional-only band (declared formulas still evaluate; implicits don't
-/// exist because there is no iteration).
-///
-/// Declared formulas evaluate in declaration order; each sees the earlier ones
-/// via `row.<name>` (a forward reference is null, so cycles are impossible —
-/// same rule as doc-level computed). A declared name that collides with an
-/// implicit is skipped so the implicit always wins deterministically; the
-/// editor rejects those names at validation time.
-pub fn eval_row(
-    root: &Value,
-    computed: &[Computed],
-    loop_ctx: LoopCtx,
-    iter: Option<(usize, usize)>,
-) -> Value {
-    let mut row = serde_json::Map::new();
+/// A band's row formulas, parsed once. The renderer evaluates them once per
+/// loop iteration; compiling up front keeps a 100k-item loop from re-parsing
+/// every formula 100k times. Reserved (implicit) names are dropped here so the
+/// implicit value always wins deterministically — the editor rejects them at
+/// validation time, `preview_row` reports them as errors.
+pub(crate) type CompiledRow = Vec<(String, crate::expr::Compiled)>;
+
+/// Parse a band's row formulas into a reusable [`CompiledRow`]. A formula that
+/// fails to parse evaluates to null at render time (same rule as doc-level
+/// computed), so it is simply omitted.
+pub(crate) fn compile_row(computed: &[Computed]) -> CompiledRow {
+    computed
+        .iter()
+        .take(MAX_COMPUTED)
+        .filter(|c| !RESERVED_ROW_NAMES.contains(&c.name.as_str()))
+        .filter_map(|c| {
+            crate::expr::compile(&c.formula)
+                .ok()
+                .map(|ast| (c.name.clone(), ast))
+        })
+        .collect()
+}
+
+/// Seed a row object with the implicit values of iteration `i` of `count`.
+/// The single definition both the renderer and the editor preview build on —
+/// if the implicit set ever changes, it changes here for both.
+fn seed_implicit_row(row: &mut serde_json::Map<String, Value>, iter: Option<(usize, usize)>) {
     if let Some((i, count)) = iter {
         row.insert("index".into(), Value::from(i as u64));
         row.insert("number".into(), Value::from(i as u64 + 1));
@@ -244,19 +281,43 @@ pub fn eval_row(
         row.insert("first".into(), Value::Bool(i == 0));
         row.insert("last".into(), Value::Bool(i + 1 == count));
     }
-    for c in computed.iter().take(MAX_COMPUTED) {
-        if RESERVED_ROW_NAMES.contains(&c.name.as_str()) {
-            continue;
-        }
-        // Snapshot the values so far so this formula can reference them. The
-        // clone is cheap: a row object holds a handful of scalars.
-        let so_far = Value::Object(row.clone());
+}
+
+/// Evaluate a band's compiled row formulas for **one iteration**, returning
+/// the object exposed as `row` to elements inside the band.
+///
+/// `iter` is `Some((index, count))` on a looping band — it fills the implicit
+/// `index` / `number` / `count` / `first` / `last` — and `None` on a
+/// conditional-only band (declared formulas still evaluate; implicits don't
+/// exist because there is no iteration).
+///
+/// Formulas evaluate in declaration order; each sees the earlier ones via
+/// `row.<name>` (a forward reference is null, so cycles are impossible — same
+/// rule as doc-level computed). Aggregate row scans are charged to the shared
+/// `budget`, bounding the whole render rather than a single formula.
+pub(crate) fn eval_row(
+    root: &Value,
+    compiled: &CompiledRow,
+    loop_ctx: LoopCtx,
+    iter: Option<(usize, usize)>,
+    budget: &std::cell::Cell<u64>,
+) -> Value {
+    let mut row = serde_json::Map::new();
+    seed_implicit_row(&mut row, iter);
+    for (name, ast) in compiled {
+        // Lend the values so far to the formula's scope without cloning: move
+        // the map into a Value for the borrow, then take it back.
+        let so_far = Value::Object(std::mem::take(&mut row));
         let scope = Scope {
             loop_ctx,
             row: Some(&so_far),
         };
-        let v = crate::expr::eval_formula(&c.formula, root, scope).unwrap_or(Value::Null);
-        row.insert(c.name.clone(), v);
+        let v = crate::expr::eval_compiled(ast, root, scope, budget);
+        row = match so_far {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        row.insert(name.clone(), v);
     }
     Value::Object(row)
 }
@@ -293,19 +354,16 @@ pub fn preview_row(
         Some(Value::Array(a)) if !a.is_empty() => Some(a),
         _ => None,
     });
+    // Cap the count like the renderer does, so `row.count` / `row.last` chips
+    // never promise something print won't do.
     let (loop_ctx, iter): (LoopCtx, Option<(usize, usize)>) = match (src, items) {
-        (Some(s), Some(a)) => (Some((s, 0, &a[0])), Some((0, a.len()))),
+        (Some(s), Some(a)) => (Some((s, 0, &a[0])), Some((0, a.len().min(MAX_LOOP)))),
         _ => (None, None),
     };
 
     let mut row = serde_json::Map::new();
-    if let Some((i, count)) = iter {
-        row.insert("index".into(), Value::from(i as u64));
-        row.insert("number".into(), Value::from(i as u64 + 1));
-        row.insert("count".into(), Value::from(count as u64));
-        row.insert("first".into(), Value::Bool(i == 0));
-        row.insert("last".into(), Value::Bool(i + 1 == count));
-    }
+    seed_implicit_row(&mut row, iter);
+    let budget = crate::expr::fresh_budget();
     let mut out = Vec::new();
     for c in computed.iter().take(MAX_COMPUTED) {
         if RESERVED_ROW_NAMES.contains(&c.name.as_str()) {
@@ -316,13 +374,20 @@ pub fn preview_row(
             });
             continue;
         }
-        let so_far = Value::Object(row.clone());
-        let scope = Scope {
-            loop_ctx,
-            row: Some(&so_far),
-        };
-        let (value, error) = match crate::expr::eval_formula(&c.formula, root, scope) {
-            Ok(v) => (v, None),
+        let (value, error) = match crate::expr::compile(&c.formula) {
+            Ok(ast) => {
+                let so_far = Value::Object(std::mem::take(&mut row));
+                let scope = Scope {
+                    loop_ctx,
+                    row: Some(&so_far),
+                };
+                let v = crate::expr::eval_compiled(&ast, root, scope, &budget);
+                row = match so_far {
+                    Value::Object(m) => m,
+                    _ => serde_json::Map::new(),
+                };
+                (v, None)
+            }
             Err(e) => (Value::Null, Some(e)),
         };
         row.insert(c.name.clone(), value.clone());

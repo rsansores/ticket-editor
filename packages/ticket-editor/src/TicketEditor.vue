@@ -334,15 +334,38 @@ function calcHasError(name: string): boolean {
 // — earlier-only); for a new var, append it. The sentinel key can't collide with
 // a real name because the editor forbids non-`[A-Za-z_]` names.
 const DRAFT_KEY = '--draft--'
-async function previewFormula(formula: string): Promise<ComputedResult> {
-  const all = computedVars.value
-  const orig = editingCalc.value?.name
-  const idx = orig ? all.findIndex((c) => c.name === orig) : -1
+// Splice a draft formula into a computed list at its real position (an edit
+// replaces in place so forward references resolve exactly as they will save;
+// a new entry is appended). Shared by the doc-level and row-level dialogs so
+// the two preview paths can't drift.
+function draftList(
+  all: Computed[],
+  origName: string | undefined,
+  formula: string,
+): { list: Computed[]; key: string } {
+  const idx = origName ? all.findIndex((c) => c.name === origName) : -1
   const key = idx >= 0 ? all[idx].name : DRAFT_KEY
   const list =
     idx >= 0
       ? all.map((c, i) => (i === idx ? { name: key, formula } : c))
       : [...all, { name: key, formula }]
+  return { list, key }
+}
+// Upsert by the original name captured when the dialog opened — renames keep
+// their position. Shared by doc-level and band-level saves.
+function upsertComputed(
+  list: Computed[],
+  origName: string | undefined,
+  next: Computed,
+): Computed[] {
+  const i = origName ? list.findIndex((c) => c.name === origName) : -1
+  const out = [...list]
+  if (i >= 0) out[i] = next
+  else out.push(next)
+  return out
+}
+async function previewFormula(formula: string): Promise<ComputedResult> {
+  const { list, key } = draftList(computedVars.value, editingCalc.value?.name, formula)
   const rep = await previewComputed(list, props.variables ?? {})
   return rep.find((r) => r.name === key) ?? { name: key, value: '', kind: 'empty', error: null }
 }
@@ -353,13 +376,7 @@ function editCalc(c: Computed) {
   editingCalc.value = JSON.parse(JSON.stringify(c)) as Computed
 }
 function saveCalc(next: Computed) {
-  const list = [...(doc.value.computed ?? [])]
-  // Match by the original name captured when the dialog opened (renames keep place).
-  const orig = editingCalc.value?.name
-  const i = orig ? list.findIndex((c) => c.name === orig) : -1
-  if (i >= 0) list[i] = next
-  else list.push(next)
-  doc.value.computed = list
+  doc.value.computed = upsertComputed(doc.value.computed ?? [], editingCalc.value?.name, next)
   editingCalc.value = null
 }
 function removeCalc(name: string) {
@@ -394,12 +411,7 @@ function saveRowCalc(next: Computed) {
   if (!ctx) return
   const region = regionById(ctx.regionId)
   if (!region) return
-  const list = [...(region.computed ?? [])]
-  const orig = ctx.calc.name // renames keep their position
-  const i = orig ? list.findIndex((c) => c.name === orig) : -1
-  if (i >= 0) list[i] = next
-  else list.push(next)
-  updateRegion({ ...region, computed: list })
+  updateRegion({ ...region, computed: upsertComputed(region.computed ?? [], ctx.calc.name, next) })
 }
 function removeRowCalc(regionId: string, name: string) {
   const region = regionById(regionId)
@@ -409,42 +421,14 @@ function removeRowCalc(regionId: string, name: string) {
 }
 // Live first-row results per band, keyed regionId → name → result. Drives the
 // value chips in the band drawer and the default formatting when placed.
+// Populated by the shared integrity watcher below.
 const rowCalcReports = ref<Record<string, Record<string, ComputedResult>>>({})
-watch(
-  [() => doc.value.regions, previewData],
-  async () => {
-    const out: Record<string, Record<string, ComputedResult>> = {}
-    for (const r of doc.value.regions ?? []) {
-      if (!r.computed?.length) continue
-      try {
-        const rep = await previewRowComputed(
-          snapshot(doc.value),
-          r.id,
-          r.computed,
-          previewData.value ?? {},
-        )
-        out[r.id] = Object.fromEntries(rep.map((x) => [x.name, x]))
-      } catch {
-        // engine unavailable → no chips, the preview pane surfaces the error
-      }
-    }
-    rowCalcReports.value = out
-  },
-  { immediate: true, deep: true },
-)
 // Evaluate a DRAFT row formula in its real position within the band's list
 // (same replace-in-place trick as previewFormula) against the first data row.
 async function previewRowFormula(formula: string): Promise<ComputedResult> {
   const ctx = editingRowCalc.value
   if (!ctx) return { name: '', value: '', kind: 'empty', error: null }
-  const all = regionById(ctx.regionId)?.computed ?? []
-  const orig = ctx.calc.name
-  const idx = orig ? all.findIndex((c) => c.name === orig) : -1
-  const key = idx >= 0 ? all[idx].name : DRAFT_KEY
-  const list =
-    idx >= 0
-      ? all.map((c, i) => (i === idx ? { name: key, formula } : c))
-      : [...all, { name: key, formula }]
+  const { list, key } = draftList(regionById(ctx.regionId)?.computed ?? [], ctx.calc.name, formula)
   const rep = await previewRowComputed(
     snapshot(doc.value),
     ctx.regionId,
@@ -534,14 +518,39 @@ function placeRowCalc(regionId: string, c: Computed) {
 // print these render empty, so surface them while designing (the preview shows
 // fakes for liveliness — this badge is the honesty layer on top).
 const missingPaths = ref<string[]>([])
+
+// One debounced integrity pass per doc/data change: a single snapshot feeds
+// the missing-paths check and every band's row-calc preview, in parallel. The
+// sequence token drops stale async results (rapid edits can resolve out of
+// order and would otherwise clobber a newer state with an older answer).
+let integritySeq = 0
+let integrityTimer: ReturnType<typeof setTimeout> | undefined
+async function runIntegrityPass() {
+  const seq = ++integritySeq
+  const snap = snapshot(doc.value)
+  const data = previewData.value ?? {}
+  try {
+    const bands = (snap.regions ?? []).filter((r) => r.computed?.length)
+    const [missing, reports] = await Promise.all([
+      unresolvedPaths(snap, data),
+      Promise.all(bands.map((r) => previewRowComputed(snap, r.id, r.computed ?? [], data))),
+    ])
+    if (seq !== integritySeq) return // superseded by a newer edit
+    missingPaths.value = missing
+    rowCalcReports.value = Object.fromEntries(
+      bands.map((r, i) => [r.id, Object.fromEntries(reports[i].map((x) => [x.name, x]))]),
+    )
+  } catch {
+    if (seq !== integritySeq) return
+    missingPaths.value = []
+    rowCalcReports.value = {}
+  }
+}
 watch(
   [doc, previewData],
-  async () => {
-    try {
-      missingPaths.value = await unresolvedPaths(snapshot(doc.value), previewData.value ?? {})
-    } catch {
-      missingPaths.value = []
-    }
+  () => {
+    clearTimeout(integrityTimer)
+    integrityTimer = setTimeout(runIntegrityPass, 180)
   },
   { immediate: true, deep: true },
 )

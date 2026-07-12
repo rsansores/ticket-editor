@@ -92,10 +92,6 @@ impl RenderOptions {
 /// in pixels (~64 megapixels). Bounds memory against adversarial documents.
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 
-/// Hard ceiling on loop iterations, so a giant data array can't explode the
-/// placement list before the pixel guard runs. No real ticket loops this much.
-const MAX_LOOP: u32 = 100_000;
-
 /// One laid-out character to draw.
 struct Placement {
     /// Absolute base-grid column (margins already applied).
@@ -202,9 +198,14 @@ fn lay_out(
     let mut band_els: Vec<Vec<&Element>> = vec![Vec::new(); regions.len()];
     let mut free_els: Vec<&Element> = Vec::new();
     for el in &doc.elements {
-        match regions
-            .iter()
-            .position(|r| el.row >= r.start_row && el.row < r.end_row)
+        // Regions are sorted by start_row, so only bands starting at or above
+        // this row can contain it — binary-search the boundary and scan back
+        // (the scan is 1 step unless bands overlap, which the editor never
+        // produces; a hostile doc degrades gracefully instead of O(E×R)).
+        let bound = regions.partition_point(|r| r.start_row <= el.row);
+        match (0..bound)
+            .rev()
+            .find(|&i| el.row < regions[i].end_row)
         {
             Some(i) => band_els[i].push(el),
             None => free_els.push(el),
@@ -218,6 +219,9 @@ fn lay_out(
     let mut placements = Vec::new();
     let mut blocks: Vec<RasterBlock> = Vec::new();
     let mut max_bottom: i64 = 0; // lowest content row reached (absolute), exclusive
+    // ONE aggregate-row budget for the whole layout: shared across every row
+    // formula of every loop iteration (see expr::fresh_budget).
+    let budget = crate::expr::fresh_budget();
 
     // Emit one element at an absolute base row. Returns the rows the element
     // occupies BEYOND its design row (`(lines-1)*scale` for a wrapped variable,
@@ -251,15 +255,19 @@ fn lay_out(
                         });
                     }
                     let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
-                    // A dynamic image (e.g. a signature) resolves its base64 bytes
-                    // from a variable; a missing/undecodable source falls through to
-                    // the placeholder frame below.
+                    // A dynamic image (e.g. a signature) resolves its base64
+                    // bytes from a variable. In the editor a missing/empty
+                    // source draws the placeholder frame below (visible while
+                    // designing); on a real print it draws NOTHING — a hollow
+                    // frame where a signature should be is print corruption,
+                    // same rule as QR/barcode.
                     let resolved;
                     let src: &str = if *from_variable {
-                        resolved = match data::resolve_scoped(scope, variables, data) {
-                            Some(v) => data::value_to_string(v),
-                            None => String::new(),
-                        };
+                        resolved = data::resolve_or_fake(scope, variables, data, opts.placeholders)
+                            .unwrap_or_default();
+                        if resolved.is_empty() && !opts.placeholders {
+                            return Ok(0);
+                        }
                         &resolved
                     } else {
                         data
@@ -287,16 +295,15 @@ fn lay_out(
                     from_variable,
                     size,
                 } => {
+                    // Real print: a QR whose variable is missing or empty is
+                    // meaningless AND unscannable — draw nothing rather than a
+                    // placeholder frame on a customer's receipt. The editor
+                    // (placeholder mode) still shows a fake so the canvas is
+                    // lively — except for row.* paths, which never fake.
                     let text = if *from_variable {
-                        // The path may point at a calculated variable (`calc.*`)
-                        // or a row value — resolved like any other.
-                        match data::resolve_scoped(scope, variables, value) {
-                            Some(v) => data::value_to_string(v),
-                            // Real print: a QR of a value that doesn't exist is
-                            // meaningless AND unscannable — draw nothing rather
-                            // than a placeholder frame on a customer's receipt.
-                            None if !opts.placeholders => return Ok(0),
-                            None => data::fake_for(value),
+                        match data::resolve_or_fake(scope, variables, value, opts.placeholders) {
+                            Some(t) if !t.is_empty() || opts.placeholders => t,
+                            _ => return Ok(0),
                         }
                     } else {
                         value.clone()
@@ -329,12 +336,11 @@ fn lay_out(
                     width,
                     height,
                 } => {
+                    // Same policy as QR: no value → no barcode on a real print.
                     let text = if *from_variable {
-                        match data::resolve_scoped(scope, variables, value) {
-                            Some(v) => data::value_to_string(v),
-                            // Same as QR: no value → no barcode on a real print.
-                            None if !opts.placeholders => return Ok(0),
-                            None => data::fake_for(value),
+                        match data::resolve_or_fake(scope, variables, value, opts.placeholders) {
+                            Some(t) if !t.is_empty() || opts.placeholders => t,
+                            _ => return Ok(0),
                         }
                     } else {
                         value.clone()
@@ -441,7 +447,10 @@ fn lay_out(
         // list before the pixel guard runs.
         let items: Option<&[Value]> = region.source.as_deref().and_then(|s| {
             match data::resolve(variables, s) {
-                Some(Value::Array(a)) => Some(&a[..a.len().min(MAX_LOOP as usize)]),
+                // Capped so a giant data array can't explode the placement
+                // list before the pixel guard runs. No real ticket loops this
+                // much; the same cap bounds preview_row's count/last chips.
+                Some(Value::Array(a)) => Some(&a[..a.len().min(data::MAX_LOOP)]),
                 _ => None,
             }
         });
@@ -460,6 +469,17 @@ fn lay_out(
         }
 
         let els = &band_els[ri];
+        // Row values cost one object per iteration — skip the machinery when
+        // nothing in the band reads `row.*`. Formulas parse ONCE here; the
+        // loop below only evaluates the compiled ASTs, and every aggregate
+        // scan in every iteration draws from the single shared budget, so a
+        // hostile document can't multiply per-formula allowances into a stall.
+        let band_uses_row = els.iter().any(|el| element_references_row(el));
+        let compiled = if band_uses_row {
+            data::compile_row(&region.computed)
+        } else {
+            Vec::new()
+        };
         let band_top = mt as i64 + i64::from(region.start_row) + flow;
         let mut cursor = band_top;
         for i in 0..count {
@@ -468,8 +488,15 @@ fn lay_out(
                 .and_then(|item| region.source.as_deref().map(|src| (src, i, item)));
             // Row values: every loop iteration gets the implicit index/number/…;
             // declared formulas evaluate on loop AND shown-conditional bands.
-            let row_vals: Option<Value> = (loop_ctx.is_some() || !region.computed.is_empty())
-                .then(|| data::eval_row(variables, &region.computed, loop_ctx, loop_ctx.map(|_| (i, count))));
+            let row_vals: Option<Value> = band_uses_row.then(|| {
+                data::eval_row(
+                    variables,
+                    &compiled,
+                    loop_ctx,
+                    loop_ctx.map(|_| (i, count)),
+                    &budget,
+                )
+            });
             let scope = data::Scope {
                 loop_ctx,
                 row: row_vals.as_ref(),
@@ -587,6 +614,35 @@ fn placeholder_mask(w: u32, h: u32) -> Vec<bool> {
     m
 }
 
+/// Whether an element reads the row scope — its bound path or its condition
+/// targets `row` / `row.*`. Decides if a band pays for per-iteration row
+/// values at all.
+fn element_references_row(el: &Element) -> bool {
+    let is_row = |p: &str| p == "row" || p.starts_with("row.");
+    if el.condition.as_ref().is_some_and(|c| is_row(&c.var)) {
+        return true;
+    }
+    match &el.kind {
+        ElementKind::Variable { path, .. } => is_row(path),
+        ElementKind::Qr {
+            value,
+            from_variable,
+            ..
+        }
+        | ElementKind::Barcode {
+            value,
+            from_variable,
+            ..
+        } => *from_variable && is_row(value),
+        ElementKind::Image {
+            data,
+            from_variable,
+            ..
+        } => *from_variable && is_row(data),
+        ElementKind::Text { .. } => false,
+    }
+}
+
 /// Resolve an element to its final display string (variable lookup in the given
 /// scope, then number or date formatting). An unresolved path renders empty
 /// unless `opts.placeholders` is on (editor preview), in which case a
@@ -604,12 +660,8 @@ fn resolve_display(el: &Element, scope: data::Scope, root: &Value, opts: &Render
             date_format,
             ..
         } => {
-            let row_scoped = path == "row" || path.starts_with("row.");
-            let raw = match data::resolve_scoped(scope, root, path) {
-                Some(v) => data::value_to_string(v),
-                None if !opts.placeholders || row_scoped => String::new(),
-                None => data::fake_for(path),
-            };
+            let raw =
+                data::resolve_or_fake(scope, root, path, opts.placeholders).unwrap_or_default();
             if let Some(nf) = number {
                 format::format_number(&raw, nf)
             } else if let Some(df) = date_format {
@@ -652,8 +704,9 @@ fn fit_lines(el: &Element, display: &str, content_cols: u32, scale: u32) -> Vec<
                 let mut lines = wrap_text(display, band);
                 // Bound a runaway value: keep at most `max_lines` lines and mark
                 // the cut with a trailing `…` on the last kept line.
-                if let Some(m) = max_lines {
-                    let m = (*m as usize).max(1);
+                // 0 (the editor's "no limit") and absent both mean unbounded.
+                if let Some(m) = max_lines.filter(|m| *m > 0) {
+                    let m = m as usize;
                     if lines.len() > m {
                         lines.truncate(m);
                         if let Some(last) = lines.last_mut() {

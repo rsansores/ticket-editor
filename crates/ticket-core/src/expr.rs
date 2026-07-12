@@ -53,16 +53,46 @@ const MAX_ROWS: usize = 100_000;
 const MAX_TOTAL_ROWS: u64 = 2_000_000;
 
 /// Parse and evaluate `formula` against `root` in a scope (optional loop
-/// binding plus optional `row.*` values). `Ok` is the resulting value (possibly
-/// null); `Err` is a human-readable parse or structural error for the editor to
-/// show.
+/// binding plus optional `row.*` values) in one shot, with a fresh budget.
+/// Production paths compile once and reuse ([`compile`] + [`eval_compiled`]);
+/// this convenience remains for one-off evaluation and the test suite.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn eval_formula(formula: &str, root: &Value, scope: Scope) -> Result<Value, String> {
+    let compiled = compile(formula)?;
+    let budget = Cell::new(MAX_TOTAL_ROWS);
+    Ok(eval_compiled(&compiled, root, scope, &budget))
+}
+
+/// A parsed, reusable formula. Row-scoped formulas evaluate once per loop
+/// iteration — compiling once and evaluating the AST per row keeps a
+/// 100k-item loop from re-parsing its formulas 100k times.
+pub(crate) struct Compiled(Ast);
+
+/// Parse a formula into a reusable [`Compiled`] AST.
+pub(crate) fn compile(formula: &str) -> Result<Compiled, String> {
     if formula.len() > MAX_LEN {
         return Err(format!("formula too long (max {MAX_LEN} characters)"));
     }
-    let ast = parse(formula)?;
-    let budget = Cell::new(MAX_TOTAL_ROWS);
-    Ok(eval(&ast, root, scope, 0, &budget))
+    Ok(Compiled(parse(formula)?))
+}
+
+/// Evaluate a compiled formula, charging aggregate row scans to a
+/// caller-provided budget. Sharing one budget across every formula of every
+/// loop iteration is what bounds a whole render, not just a single formula —
+/// a hostile document can't multiply per-formula budgets into a stall.
+pub(crate) fn eval_compiled(
+    compiled: &Compiled,
+    root: &Value,
+    scope: Scope,
+    budget: &Cell<u64>,
+) -> Value {
+    eval(&compiled.0, root, scope, 0, budget)
+}
+
+/// The shared aggregate-row budget for one render or preview. Public to the
+/// crate so `render`/`data` can allocate one per top-level operation.
+pub(crate) fn fresh_budget() -> Cell<u64> {
+    Cell::new(MAX_TOTAL_ROWS)
 }
 
 // ---------------------------------------------------------------------------

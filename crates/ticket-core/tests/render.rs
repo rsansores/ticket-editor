@@ -682,24 +682,78 @@ fn adversarial_inputs_do_not_panic() {
 }
 
 #[test]
-fn image_from_variable_resolves_and_falls_back_to_placeholder() {
-    // A dynamic image (e.g. a signature) resolves its base64 from a variable; a
-    // missing source draws the placeholder frame, and the two must differ.
+fn image_from_variable_resolves_and_missing_draws_nothing_on_print() {
+    // A dynamic image (e.g. a signature) resolves its base64 from a variable.
+    // Missing source: the EDITOR (placeholder mode) draws the visible frame so
+    // the designer sees the slot; a REAL PRINT draws nothing — a hollow frame
+    // where a signature should be is print corruption, same rule as QR/barcode.
     // A valid 8x8 checkerboard PNG (base64), distinct from the placeholder frame.
     let png_8x8 = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAF0lEQVR42mNgYGD4//8/FhK7KAQMPh0AXXNfoWyFCAcAAAAASUVORK5CYII=";
     let doc: TicketDoc = serde_json::from_value(json!({
-        "version": 2, "paper": { "width_chars": 20 },
+        "version": 2, "paper": { "width_chars": 20, "min_rows": 6 },
         "elements": [{ "id": "img", "row": 0, "col": 0, "type": "image",
                        "data": "sale.signature", "from_variable": true, "w": 8, "h": 4 }]
     }))
     .unwrap();
+    let blank: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20, "min_rows": 6 }, "elements": []
+    }))
+    .unwrap();
+    let fonts = &Fonts::builtin().unwrap();
     let resolved = render_png(&doc, &json!({ "sale": { "signature": png_8x8 } })).unwrap();
-    let missing = render_png(&doc, &serde_json::Value::Null).unwrap(); // → placeholder
+    let missing_print = render_png(&doc, &serde_json::Value::Null).unwrap();
+    let missing_editor =
+        render_png_with_options(&doc, &serde_json::Value::Null, fonts, &RenderOptions::placeholders())
+            .unwrap();
+    let empty_doc = render_png(&blank, &serde_json::Value::Null).unwrap();
     assert_eq!(&resolved[0..4], &[0x89, b'P', b'N', b'G']);
-    assert_ne!(
-        resolved, missing,
-        "a resolved image must differ from the placeholder"
+    assert_eq!(
+        missing_print, empty_doc,
+        "print mode: a missing dynamic image must contribute no ink"
     );
+    assert_ne!(
+        missing_editor, empty_doc,
+        "editor mode: the placeholder frame must stay visible"
+    );
+    assert_ne!(resolved, missing_editor);
+}
+
+#[test]
+fn row_scoped_qr_never_fakes_and_max_lines_zero_is_unbounded() {
+    // A QR bound to `row.folio` OUTSIDE any band: even in placeholder mode it
+    // must draw nothing — a scannable-looking fake that print drops is the
+    // exact hazard the row.* rule exists to prevent.
+    let qr_doc: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20, "min_rows": 12 },
+        "elements": [{ "id": "q", "row": 0, "col": 0, "type": "qr",
+                       "value": "row.folio", "from_variable": true, "size": 10 }]
+    }))
+    .unwrap();
+    let blank: TicketDoc = serde_json::from_value(json!({
+        "version": 2, "paper": { "width_chars": 20, "min_rows": 12 }, "elements": []
+    }))
+    .unwrap();
+    let fonts = &Fonts::builtin().unwrap();
+    let editor =
+        render_png_with_options(&qr_doc, &json!({}), fonts, &RenderOptions::placeholders())
+            .unwrap();
+    let empty = render_png_with_options(&blank, &json!({}), fonts, &RenderOptions::placeholders())
+        .unwrap();
+    assert_eq!(editor, empty, "row.* QR outside a band must never fake");
+
+    // max_lines: 0 means unbounded (the editor's "no limit"), not "cut to 1".
+    let wrap_doc = |max: u32| -> TicketDoc {
+        serde_json::from_value(json!({
+            "version": 2, "paper": { "width_chars": 24 },
+            "elements": [{ "id": "w", "row": 0, "col": 0, "type": "variable",
+                           "path": "x", "length": 10, "wrap": true, "max_lines": max }]
+        }))
+        .unwrap()
+    };
+    let data = json!({ "x": "aaaa bbbb cccc dddd" });
+    let zero = render_png(&wrap_doc(0), &data).unwrap();
+    let one = render_png(&wrap_doc(1), &data).unwrap();
+    assert_ne!(zero, one, "max_lines 0 must not behave like max_lines 1");
 }
 
 #[test]
