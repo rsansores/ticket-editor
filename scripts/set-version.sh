@@ -19,6 +19,11 @@ cd "$(dirname "$0")/.."
 # `version = "..."` in the root manifest is [workspace.package].
 sed -i -E "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" Cargo.toml
 
+# Inter-crate dependency requirements must move in lockstep too: crates.io
+# strips `path`, so the published ticket-printable resolves its derive by this
+# version alone. A stale requirement fails the whole release at resolve time.
+sed -i -E "s|^(ticket-printable-derive = \{ path = \"[^\"]+\", version = \")[^\"]+|\1$VERSION|" Cargo.toml
+
 # npm package version (edit via node to preserve JSON structure).
 node -e '
   const fs = require("fs");

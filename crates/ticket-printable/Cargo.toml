@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 serde_json = { workspace = true }
-ticket-printable-derive = { path = "../ticket-printable-derive", version = "0.2", optional = true }
+ticket-printable-derive = { workspace = true, optional = true }
 
 # Optional leaf mappings for well-known crates. Enable the ones your models use
 # and those types map automatically (Uuid -> text, DateTime -> date,
