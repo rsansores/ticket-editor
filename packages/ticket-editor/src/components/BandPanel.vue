@@ -1,11 +1,14 @@
 <script setup lang="ts">
 // Right-drawer configuration for a flow band (loop / condition) — same place and
 // pattern as configuring an element, so there's no new mental model. Selected by
-// clicking the band's bar in the left lane.
+// clicking the band's bar in the left lane. Loop bands also host their
+// "calculated columns" (row-scoped formulas like line_total = qty × price),
+// managed here and edited in the same dialog as doc-level calculated values.
 import { computed } from 'vue'
 import ConditionEditor from './ConditionEditor.vue'
+import TypeTag from './TypeTag.vue'
 import { useT } from '../i18n'
-import type { Condition, Region } from '../types'
+import type { Computed, ComputedResult, Condition, Region } from '../types'
 
 const t = useT()
 
@@ -13,8 +16,26 @@ const props = defineProps<{
   region: Region
   loopSources: { path: string; key: string }[]
   allVars: { path: string; key: string }[]
+  /** Live first-row results for this band's calculated columns, keyed by name. */
+  calcReports?: Record<string, ComputedResult>
 }>()
-const emit = defineEmits<{ 'update:region': [r: Region]; remove: [id: string] }>()
+const emit = defineEmits<{
+  'update:region': [r: Region]
+  remove: [id: string]
+  /** Open the calculated-column dialog (null calc = new). */
+  'edit-calc': [regionId: string, calc: Computed | null]
+  'remove-calc': [regionId: string, name: string]
+  /** Place `row.<name>` on the ticket as a variable element inside this band. */
+  'place-calc': [regionId: string, calc: Computed]
+}>()
+
+const rowCalcs = computed<Computed[]>(() => props.region.computed ?? [])
+function calcError(name: string): string | undefined {
+  return props.calcReports?.[name]?.error ?? undefined
+}
+function calcValue(name: string): string {
+  return props.calcReports?.[name]?.value ?? ''
+}
 
 const span = computed(() => Math.max(1, props.region.end_row - props.region.start_row))
 
@@ -123,6 +144,59 @@ function setCond(on: boolean) {
     <p v-if="!region.source && !region.condition" class="te-bc-hint">
       {{ t('bandHint') }}
     </p>
+
+    <!-- calculated columns: per-line formulas exposed as row.<name> -->
+    <div v-if="region.source" class="te-bc-calc">
+      <h4 class="te-bc-calc-title">{{ t('bandCalcTitle') }}</h4>
+      <ul v-if="rowCalcs.length" class="te-bc-calc-list">
+        <li v-for="c in rowCalcs" :key="c.name" class="te-bc-calc-item">
+          <button
+            class="te-bc-calc-add"
+            type="button"
+            :title="t('bandCalcPlace') + ' — ' + c.formula"
+            @click="emit('place-calc', region.id, c)"
+          >
+            <span class="te-bc-calc-eq" aria-hidden="true">=</span>
+            <span class="te-bc-calc-key">{{ c.name }}</span>
+            <span v-if="calcError(c.name)" class="te-bc-calc-warn" :title="calcError(c.name)"
+              >⚠</span
+            >
+            <template v-else>
+              <code v-if="calcValue(c.name) !== ''" class="te-bc-calc-val">{{
+                calcValue(c.name)
+              }}</code>
+              <TypeTag
+                v-else
+                class="te-bc-calc-tag"
+                :type="calcReports?.[c.name]?.kind === 'number' ? 'number' : 'text'"
+              />
+            </template>
+          </button>
+          <button
+            class="te-bc-calc-icon"
+            type="button"
+            :aria-label="t('calcEdit')"
+            :title="t('calcEdit')"
+            @click="emit('edit-calc', region.id, c)"
+          >
+            ✎
+          </button>
+          <button
+            class="te-bc-calc-icon"
+            type="button"
+            :aria-label="t('calcDelete')"
+            :title="t('calcDelete')"
+            @click="emit('remove-calc', region.id, c.name)"
+          >
+            🗑
+          </button>
+        </li>
+      </ul>
+      <p v-else class="te-bc-calc-empty">{{ t('bandCalcEmpty') }}</p>
+      <button class="te-bc-calc-new" type="button" @click="emit('edit-calc', region.id, null)">
+        {{ t('bandCalcAdd') }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -201,5 +275,113 @@ function setCond(on: boolean) {
   color: var(--te-muted-fg);
   font-size: 0.78rem;
   margin: 0;
+}
+/* calculated columns — visually rhymes with the left rail's Calculated section */
+.te-bc-calc {
+  margin-top: 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--te-border);
+}
+.te-bc-calc-title {
+  margin: 0 0 0.45rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--te-muted-fg);
+  font-weight: 600;
+}
+.te-bc-calc-list {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.te-bc-calc-item {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.te-bc-calc-add {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  border-radius: calc(var(--te-radius) - 2px);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.te-bc-calc-add:hover {
+  background: var(--te-accent);
+}
+.te-bc-calc-eq {
+  color: var(--te-primary);
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.te-bc-calc-key {
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: var(--te-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.te-bc-calc-val {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: var(--te-muted-fg);
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.te-bc-calc-tag {
+  margin-left: auto;
+}
+.te-bc-calc-warn {
+  margin-left: auto;
+  color: #dc2626;
+  font-size: 0.8rem;
+}
+.te-bc-calc-icon {
+  border: 0;
+  background: transparent;
+  color: var(--te-muted-fg);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.15rem;
+  flex: none;
+}
+.te-bc-calc-icon:hover {
+  color: inherit;
+}
+.te-bc-calc-empty {
+  margin: 0 0 0.4rem;
+  color: var(--te-muted-fg);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+.te-bc-calc-new {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: 1px dashed var(--te-input);
+  border-radius: calc(var(--te-radius) - 2px);
+  background: transparent;
+  color: var(--te-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+}
+.te-bc-calc-new:hover {
+  background: var(--te-accent);
 }
 </style>

@@ -65,13 +65,56 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
+/// Options controlling how a document is rendered.
+///
+/// `Default` is the **backend / real-print** configuration. The editor opts into
+/// placeholder mode explicitly.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct RenderOptions {
+    /// When true (the editor's live preview), a variable path that doesn't
+    /// resolve in the data renders a deterministic fake value so the canvas
+    /// looks alive before any real data exists. When false (the default — a
+    /// backend printing a real ticket), an unresolved path renders **empty**,
+    /// padded to its reserved width like any short value: a typo'd path or a
+    /// legitimately-null field must never print a believable wrong value.
+    pub placeholders: bool,
+}
+
+impl RenderOptions {
+    /// The editor-preview configuration (fake values for unresolved paths).
+    pub fn placeholders() -> Self {
+        RenderOptions { placeholders: true }
+    }
+}
+
+/// A [`Marker`](crate::schema::ElementKind::Marker) the layout encountered,
+/// with its **absolute, post-flow** row (top margin included, loops expanded,
+/// collapses and wrap shifts applied) — where in the output the consumer
+/// should inject the mapped device command. `row × cell_height_px` is the
+/// pixel y; markers are reported top-to-bottom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkerHit {
+    /// The marker's intent name (`cut`, `feed`, `beep`, `drawer`, or custom).
+    pub name: String,
+    /// Absolute grid row after the flow transform.
+    pub row: u32,
+}
+
+/// Everything a render produces: the raster plus the finishing markers. A
+/// consumer that ignores `markers` behaves exactly like the plain
+/// [`render_png`] path.
+#[derive(Debug, Clone)]
+pub struct RenderOutput {
+    /// The rendered ticket as PNG bytes.
+    pub png: Vec<u8>,
+    /// Finishing markers in top-to-bottom order.
+    pub markers: Vec<MarkerHit>,
+}
+
 /// Hard ceiling on any single raster (the whole canvas, or one logo/QR block),
 /// in pixels (~64 megapixels). Bounds memory against adversarial documents.
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
-
-/// Hard ceiling on loop iterations, so a giant data array can't explode the
-/// placement list before the pixel guard runs. No real ticket loops this much.
-const MAX_LOOP: u32 = 100_000;
 
 /// One laid-out character to draw.
 struct Placement {
@@ -103,7 +146,8 @@ struct RasterBlock {
     mask: Vec<bool>,
 }
 
-/// Render a document to PNG bytes using only the built-in font.
+/// Render a document to PNG bytes using only the built-in font and the default
+/// [`RenderOptions`] (real-print mode: unresolved paths render empty).
 pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderError> {
     render_png_with_fonts(doc, variables, Fonts::builtin_shared())
 }
@@ -112,12 +156,38 @@ pub fn render_png(doc: &TicketDoc, variables: &Value) -> Result<Vec<u8>, RenderE
 /// default plus any families registered via [`Fonts::add_family`] (e.g. from
 /// lazily-loaded TTFs). Fails with [`RenderError::MissingFont`] if the document
 /// references a family the set doesn't contain, so a render never silently
-/// substitutes a font.
+/// substitutes a font. Uses the default [`RenderOptions`].
 pub fn render_png_with_fonts(
     doc: &TicketDoc,
     variables: &Value,
     fonts: &Fonts,
 ) -> Result<Vec<u8>, RenderError> {
+    render_png_with_options(doc, variables, fonts, &RenderOptions::default())
+}
+
+/// Render a document to PNG bytes with explicit [`RenderOptions`]. The editor
+/// preview passes [`RenderOptions::placeholders`]; a backend printing real
+/// tickets uses the default.
+pub fn render_png_with_options(
+    doc: &TicketDoc,
+    variables: &Value,
+    fonts: &Fonts,
+    opts: &RenderOptions,
+) -> Result<Vec<u8>, RenderError> {
+    Ok(render(doc, variables, fonts, opts)?.png)
+}
+
+/// Render a document to a [`RenderOutput`]: the PNG plus the finishing
+/// markers (cut / feed / beep / drawer) with their resolved absolute rows.
+/// This is the full-fidelity entry point for a print consumer that maps
+/// marker intent to device commands; the `render_png*` family are thin
+/// wrappers that drop the markers.
+pub fn render(
+    doc: &TicketDoc,
+    variables: &Value,
+    fonts: &Fonts,
+    opts: &RenderOptions,
+) -> Result<RenderOutput, RenderError> {
     // Evaluate calculated variables once and expose them under `calc.*`, so every
     // downstream resolver (variables, QR-from-variable, conditions, loops) treats
     // them like ordinary data. Skipped entirely when the document has none.
@@ -128,32 +198,30 @@ pub fn render_png_with_fonts(
         merged = data::with_computed(variables, &doc.computed);
         &merged
     };
-    let (placements, blocks, total_rows) = lay_out(doc, variables, fonts)?;
-    rasterize(doc, &placements, &blocks, total_rows, fonts)
-}
-
-/// A region resolved against the data: how many times it renders and how many
-/// rows it adds to (or removes from) everything below it.
-struct RegionPlan<'a> {
-    region: &'a crate::schema::Region,
-    height: u32,
-    /// Loop item count (1 for a plain conditional band that is shown, 0 if the
-    /// band is collapsed — condition false or an empty/absent loop source).
-    count: u32,
-    /// Extra rows added after `end_row`: `(count-1)*height`, or `-height` when the
-    /// band collapses.
-    delta_after: i64,
+    let (placements, blocks, total_rows, mut markers) = lay_out(doc, variables, fonts, opts)?;
+    // Top-to-bottom, then declaration order — deterministic for consumers.
+    markers.sort_by_key(|m| m.row);
+    let png = rasterize(doc, &placements, &blocks, total_rows, fonts)?;
+    Ok(RenderOutput { png, markers })
 }
 
 /// Stage 1: apply the flow transform (loops expand, conditional bands collapse,
-/// content below reflows) and expand every visible element into character
-/// placements. Returns the placements and the total grid rows needed.
+/// wrapped lines push content down, content below reflows) and expand every
+/// visible element into character placements. Returns the placements and the
+/// total grid rows needed.
+///
+/// The transform is a single top-down walk. `flow` carries the net rows
+/// everything at the current design position has been pushed down (+) or pulled
+/// up (−) by what's above it: loop repetitions, collapsed bands, and lines added
+/// by `wrap`. Because rows below never affect rows above, one pass suffices —
+/// region deltas and wrap deltas compose by simple accumulation.
 #[allow(clippy::type_complexity)]
 fn lay_out(
     doc: &TicketDoc,
     variables: &Value,
     fonts: &Fonts,
-) -> Result<(Vec<Placement>, Vec<RasterBlock>, u32), RenderError> {
+    opts: &RenderOptions,
+) -> Result<(Vec<Placement>, Vec<RasterBlock>, u32, Vec<MarkerHit>), RenderError> {
     let paper = &doc.paper;
     let content_cols = paper.content_cols();
     let ml = paper.margin_left_chars;
@@ -163,274 +231,348 @@ fn lay_out(
     let cell_w64 = u64::from(cell_w);
     let cell_h64 = u64::from(cell_h);
 
-    // Resolve each band against the data (sorted by start so offsets accumulate).
+    // Bands sorted by start row; each element belongs to the band whose row
+    // range contains it, or to the free list. All lists ordered top-down so the
+    // walk accumulates offsets strictly downward.
     let mut regions: Vec<&crate::schema::Region> = doc.regions.iter().collect();
     regions.sort_by_key(|r| r.start_row);
-    let plans: Vec<RegionPlan> = regions
-        .iter()
-        .map(|region| {
-            let height = region.end_row.saturating_sub(region.start_row).max(1);
-            let enabled = region
-                .condition
-                .as_ref()
-                .map(|c| data::eval_condition(None, variables, c))
-                .unwrap_or(true);
-            let count = if !enabled {
-                0
-            } else if let Some(src) = &region.source {
-                match data::resolve(variables, src) {
-                    // Cap iterations so a giant data array can't explode memory.
-                    Some(Value::Array(a)) => a.len().min(MAX_LOOP as usize) as u32,
-                    _ => 0,
-                }
-            } else {
-                1
-            };
-            let delta_after = if count == 0 {
-                -i64::from(height)
-            } else {
-                (i64::from(count) - 1) * i64::from(height)
-            };
-            RegionPlan {
-                region,
-                height,
-                count,
-                delta_after,
-            }
-        })
-        .collect();
-
-    // Rows added/removed by every band whose end_row is at or above `row`.
-    let offset_before = |row: u32| -> i64 {
-        plans
-            .iter()
-            .filter(|p| p.region.end_row <= row)
-            .map(|p| p.delta_after)
-            .sum()
-    };
-    // The band (if any) that captures a given design row.
-    let region_of = |row: u32| -> Option<&RegionPlan> {
-        plans
-            .iter()
-            .find(|p| row >= p.region.start_row && row < p.region.end_row)
-    };
+    let mut band_els: Vec<Vec<&Element>> = vec![Vec::new(); regions.len()];
+    let mut free_els: Vec<&Element> = Vec::new();
+    for el in &doc.elements {
+        // Regions are sorted by start_row, so only bands starting at or above
+        // this row can contain it — binary-search the boundary and scan back
+        // (the scan is 1 step unless bands overlap, which the editor never
+        // produces; a hostile doc degrades gracefully instead of O(E×R)).
+        let bound = regions.partition_point(|r| r.start_row <= el.row);
+        match (0..bound).rev().find(|&i| el.row < regions[i].end_row) {
+            Some(i) => band_els[i].push(el),
+            None => free_els.push(el),
+        }
+    }
+    free_els.sort_by_key(|e| e.row);
+    for v in &mut band_els {
+        v.sort_by_key(|e| e.row);
+    }
 
     let mut placements = Vec::new();
     let mut blocks: Vec<RasterBlock> = Vec::new();
+    let mut markers: Vec<MarkerHit> = Vec::new();
     let mut max_bottom: i64 = 0; // lowest content row reached (absolute), exclusive
+                                 // ONE aggregate-row budget for the whole layout: shared across every row
+                                 // formula of every loop iteration (see expr::fresh_budget).
+    let budget = crate::expr::fresh_budget();
 
-    let mut emit =
-        |el: &Element, loop_ctx: data::LoopCtx, base_row: i64| -> Result<(), RenderError> {
-            // Per-element condition (evaluated in the current context): hide in place.
-            if let Some(c) = &el.condition {
-                if !data::eval_condition(loop_ctx, variables, c) {
-                    return Ok(());
-                }
-            }
-            let y_off_px = el.y_offset * cell_h as f32;
-            match &el.kind {
-                ElementKind::Image {
-                    data,
-                    from_variable,
-                    w,
-                    h,
-                    mode,
-                } => {
-                    // Bound the block in u64 BEFORE decoding/allocating (adversarial w/h).
-                    let w_px64 = u64::from((*w).max(1)) * cell_w64;
-                    let h_px64 = u64::from((*h).max(1)) * cell_h64;
-                    if w_px64 > MAX_PIXELS || h_px64 > MAX_PIXELS || w_px64 * h_px64 > MAX_PIXELS {
-                        return Err(RenderError::TooLarge {
-                            width: w_px64,
-                            height: h_px64,
-                        });
-                    }
-                    let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
-                    // A dynamic image (e.g. a signature) resolves its base64 bytes
-                    // from a variable; a missing/undecodable source falls through to
-                    // the placeholder frame below.
-                    let resolved;
-                    let src: &str = if *from_variable {
-                        resolved = match data::resolve_loop(loop_ctx, variables, data) {
-                            Some(v) => data::value_to_string(v),
-                            None => String::new(),
-                        };
-                        &resolved
-                    } else {
-                        data
-                    };
-                    let mask = match image::decode_png_gray(src) {
-                        Ok((gray, sw, sh)) => {
-                            let scaled = image::resize_gray(&gray, sw, sh, w_px, h_px);
-                            image::to_bw(&scaled, w_px, h_px, *mode)
-                        }
-                        // On a bad image, draw an outline placeholder so it's visible.
-                        Err(_) => placeholder_mask(w_px, h_px),
-                    };
-                    blocks.push(RasterBlock {
-                        x: i64::from(ml + el.col) * i64::from(cell_w),
-                        y: base_row * i64::from(cell_h) + y_off_px as i64,
-                        w: w_px,
-                        h: h_px,
-                        mask,
-                    });
-                    max_bottom = max_bottom.max(base_row + i64::from(*h));
-                }
-                ElementKind::Qr {
-                    value,
-                    from_variable,
-                    size,
-                } => {
-                    let text = if *from_variable {
-                        // The path may point at a calculated variable (`calc.*`),
-                        // e.g. a maps URL built from lat/lng — resolved like any other.
-                        match data::resolve_loop(loop_ctx, variables, value) {
-                            Some(v) => data::value_to_string(v),
-                            None => data::fake_for(value),
-                        }
-                    } else {
-                        value.clone()
-                    };
-                    let side64 = u64::from((*size).max(1)) * cell_w64; // square (scannable)
-                    if side64 > MAX_PIXELS || side64 * side64 > MAX_PIXELS {
-                        return Err(RenderError::TooLarge {
-                            width: side64,
-                            height: side64,
-                        });
-                    }
-                    let side = side64 as u32;
-                    let rows = side.div_ceil(cell_h);
-                    // A value too long to encode falls back to a visible placeholder.
-                    let mask = qr_mask(&text, side).unwrap_or_else(|| placeholder_mask(side, side));
-                    blocks.push(RasterBlock {
-                        x: i64::from(ml + el.col) * i64::from(cell_w),
-                        y: base_row * i64::from(cell_h) + y_off_px as i64,
-                        w: side,
-                        h: side,
-                        mask,
-                    });
-                    max_bottom = max_bottom.max(base_row + i64::from(rows));
-                }
-                ElementKind::Barcode {
-                    value,
-                    from_variable,
-                    symbology,
-                    width,
-                    height,
-                } => {
-                    let text = if *from_variable {
-                        match data::resolve_loop(loop_ctx, variables, value) {
-                            Some(v) => data::value_to_string(v),
-                            None => data::fake_for(value),
-                        }
-                    } else {
-                        value.clone()
-                    };
-                    let w_px64 = u64::from((*width).max(1)) * cell_w64;
-                    let h_px64 = u64::from((*height).max(1)) * cell_h64;
-                    if w_px64 > MAX_PIXELS || h_px64 > MAX_PIXELS || w_px64 * h_px64 > MAX_PIXELS {
-                        return Err(RenderError::TooLarge {
-                            width: w_px64,
-                            height: h_px64,
-                        });
-                    }
-                    let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
-                    // An unencodable value (e.g. letters in an EAN-13) falls back
-                    // to the visible placeholder frame.
-                    let mask = barcode_mask(&text, *symbology, w_px, h_px)
-                        .unwrap_or_else(|| placeholder_mask(w_px, h_px));
-                    blocks.push(RasterBlock {
-                        x: i64::from(ml + el.col) * i64::from(cell_w),
-                        y: base_row * i64::from(cell_h) + y_off_px as i64,
-                        w: w_px,
-                        h: h_px,
-                        mask,
-                    });
-                    max_bottom = max_bottom.max(base_row + i64::from(*height));
-                }
-                _ => {
-                    let scale = el.style.scale_clamped();
-                    // Resolve this element's font: its own, then the document
-                    // default, then the built-in. Validate up front so a missing
-                    // family fails the whole render rather than drawing blanks.
-                    let family = el.style.font.as_deref().or(doc.font.as_deref());
-                    if let Some(f) = family {
-                        if !fonts.contains(f) {
-                            return Err(RenderError::MissingFont(f.to_string()));
-                        }
-                    }
-                    // One allocation per element; each glyph shares it via `Rc`.
-                    let family: Option<std::rc::Rc<str>> = family.map(std::rc::Rc::from);
-                    let display = resolve_display(el, loop_ctx, variables);
-                    let lines = fit_lines(el, &display, content_cols, scale);
-                    for (li, line) in lines.iter().enumerate() {
-                        let row = base_row + i64::from(li as u32 * scale);
-                        if row < 0 {
-                            continue;
-                        }
-                        for (i, ch) in line.chars().enumerate() {
-                            placements.push(Placement {
-                                col: ml + el.col + i as u32 * scale,
-                                row: row as u32,
-                                y_off_px,
-                                ch,
-                                scale,
-                                bold: el.style.bold,
-                                italic: el.style.italic,
-                                valign: el.style.valign,
-                                font: family.clone(),
-                            });
-                        }
-                    }
-                    max_bottom = max_bottom.max(base_row + i64::from(lines.len() as u32 * scale));
-                }
-            }
-            Ok(())
-        };
-
-    for el in &doc.elements {
-        match region_of(el.row) {
-            Some(plan) if plan.region.source.is_some() => {
-                // Loop band: render once per item, offset by the band height.
-                if plan.count == 0 {
-                    continue;
-                }
-                let Some(src) = plan.region.source.as_deref() else {
-                    continue;
-                };
-                let items = data::resolve(variables, src);
-                let base = mt as i64 + i64::from(el.row) + offset_before(plan.region.start_row);
-                for i in 0..plan.count {
-                    let item = items
-                        .and_then(|v| v.as_array())
-                        .and_then(|a| a.get(i as usize));
-                    let loop_ctx = item.map(|it| (src, i as usize, it));
-                    emit(el, loop_ctx, base + i64::from(i) * i64::from(plan.height))?;
-                }
-            }
-            Some(plan) => {
-                // Conditional (non-loop) band: render only when shown.
-                if plan.count == 0 {
-                    continue;
-                }
-                emit(
-                    el,
-                    None,
-                    mt as i64 + i64::from(el.row) + offset_before(el.row),
-                )?;
-            }
-            None => {
-                emit(
-                    el,
-                    None,
-                    mt as i64 + i64::from(el.row) + offset_before(el.row),
-                )?;
+    // Emit one element at an absolute base row. Returns the rows the element
+    // occupies BEYOND its design row (`(lines-1)*scale` for a wrapped variable,
+    // 0 for everything else) so the caller can push content below it down.
+    // Blocks with explicit cell heights (image/QR/barcode) return 0: their
+    // height is visible at design time, so the author reserves rows for them.
+    let mut emit = |el: &Element, scope: data::Scope, base_row: i64| -> Result<u32, RenderError> {
+        // Per-element condition (evaluated in the current scope): hide in place.
+        if let Some(c) = &el.condition {
+            if !data::eval_condition(scope, variables, c) {
+                return Ok(0);
             }
         }
+        let y_off_px = el.y_offset * cell_h as f32;
+        match &el.kind {
+            ElementKind::Image {
+                data,
+                from_variable,
+                w,
+                h,
+                mode,
+            } => {
+                // Bound the block in u64 BEFORE decoding/allocating (adversarial w/h).
+                let w_px64 = u64::from((*w).max(1)) * cell_w64;
+                let h_px64 = u64::from((*h).max(1)) * cell_h64;
+                if w_px64 > MAX_PIXELS || h_px64 > MAX_PIXELS || w_px64 * h_px64 > MAX_PIXELS {
+                    return Err(RenderError::TooLarge {
+                        width: w_px64,
+                        height: h_px64,
+                    });
+                }
+                let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
+                // A dynamic image (e.g. a signature) resolves its base64
+                // bytes from a variable. In the editor a missing/empty
+                // source draws the placeholder frame below (visible while
+                // designing); on a real print it draws NOTHING — a hollow
+                // frame where a signature should be is print corruption,
+                // same rule as QR/barcode.
+                let resolved;
+                let src: &str = if *from_variable {
+                    resolved = data::resolve_or_fake(scope, variables, data, opts.placeholders)
+                        .unwrap_or_default();
+                    if resolved.is_empty() && !opts.placeholders {
+                        return Ok(0);
+                    }
+                    &resolved
+                } else {
+                    data
+                };
+                let mask = match image::decode_png_gray(src) {
+                    Ok((gray, sw, sh)) => {
+                        let scaled = image::resize_gray(&gray, sw, sh, w_px, h_px);
+                        image::to_bw(&scaled, w_px, h_px, *mode)
+                    }
+                    // On a bad image, draw an outline placeholder so it's visible.
+                    Err(_) => placeholder_mask(w_px, h_px),
+                };
+                blocks.push(RasterBlock {
+                    x: i64::from(ml + el.col) * i64::from(cell_w),
+                    y: base_row * i64::from(cell_h) + y_off_px as i64,
+                    w: w_px,
+                    h: h_px,
+                    mask,
+                });
+                max_bottom = max_bottom.max(base_row + i64::from(*h));
+                Ok(0)
+            }
+            ElementKind::Qr {
+                value,
+                from_variable,
+                size,
+            } => {
+                // Real print: a QR whose variable is missing or empty is
+                // meaningless AND unscannable — draw nothing rather than a
+                // placeholder frame on a customer's receipt. The editor
+                // (placeholder mode) still shows a fake so the canvas is
+                // lively — except for row.* paths, which never fake.
+                let text = if *from_variable {
+                    match data::resolve_or_fake(scope, variables, value, opts.placeholders) {
+                        Some(t) if !t.is_empty() || opts.placeholders => t,
+                        _ => return Ok(0),
+                    }
+                } else {
+                    value.clone()
+                };
+                let side64 = u64::from((*size).max(1)) * cell_w64; // square (scannable)
+                if side64 > MAX_PIXELS || side64 * side64 > MAX_PIXELS {
+                    return Err(RenderError::TooLarge {
+                        width: side64,
+                        height: side64,
+                    });
+                }
+                let side = side64 as u32;
+                let rows = side.div_ceil(cell_h);
+                // A value too long to encode falls back to a visible placeholder.
+                let mask = qr_mask(&text, side).unwrap_or_else(|| placeholder_mask(side, side));
+                blocks.push(RasterBlock {
+                    x: i64::from(ml + el.col) * i64::from(cell_w),
+                    y: base_row * i64::from(cell_h) + y_off_px as i64,
+                    w: side,
+                    h: side,
+                    mask,
+                });
+                max_bottom = max_bottom.max(base_row + i64::from(rows));
+                Ok(0)
+            }
+            ElementKind::Barcode {
+                value,
+                from_variable,
+                symbology,
+                width,
+                height,
+            } => {
+                // Same policy as QR: no value → no barcode on a real print.
+                let text = if *from_variable {
+                    match data::resolve_or_fake(scope, variables, value, opts.placeholders) {
+                        Some(t) if !t.is_empty() || opts.placeholders => t,
+                        _ => return Ok(0),
+                    }
+                } else {
+                    value.clone()
+                };
+                let w_px64 = u64::from((*width).max(1)) * cell_w64;
+                let h_px64 = u64::from((*height).max(1)) * cell_h64;
+                if w_px64 > MAX_PIXELS || h_px64 > MAX_PIXELS || w_px64 * h_px64 > MAX_PIXELS {
+                    return Err(RenderError::TooLarge {
+                        width: w_px64,
+                        height: h_px64,
+                    });
+                }
+                let (w_px, h_px) = (w_px64 as u32, h_px64 as u32);
+                // An unencodable value (e.g. letters in an EAN-13) falls back
+                // to the visible placeholder frame.
+                let mask = barcode_mask(&text, *symbology, w_px, h_px)
+                    .unwrap_or_else(|| placeholder_mask(w_px, h_px));
+                blocks.push(RasterBlock {
+                    x: i64::from(ml + el.col) * i64::from(cell_w),
+                    y: base_row * i64::from(cell_h) + y_off_px as i64,
+                    w: w_px,
+                    h: h_px,
+                    mask,
+                });
+                max_bottom = max_bottom.max(base_row + i64::from(*height));
+                Ok(0)
+            }
+            ElementKind::Marker { name } => {
+                // Zero ink, zero cells: record the intent at its resolved
+                // absolute row and move on. Doesn't touch max_bottom — a
+                // marker never makes the paper longer. Rows above the top
+                // margin can't happen in practice (y_offset doesn't move
+                // grid rows); clamp defensively.
+                markers.push(MarkerHit {
+                    name: name.clone(),
+                    row: base_row.clamp(0, i64::from(u32::MAX)) as u32,
+                });
+                Ok(0)
+            }
+            _ => {
+                let scale = el.style.scale_clamped();
+                // Resolve this element's font: its own, then the document
+                // default, then the built-in. Validate up front so a missing
+                // family fails the whole render rather than drawing blanks.
+                let family = el.style.font.as_deref().or(doc.font.as_deref());
+                if let Some(f) = family {
+                    if !fonts.contains(f) {
+                        return Err(RenderError::MissingFont(f.to_string()));
+                    }
+                }
+                // One allocation per element; each glyph shares it via `Rc`.
+                let family: Option<std::rc::Rc<str>> = family.map(std::rc::Rc::from);
+                let display = resolve_display(el, scope, variables, opts);
+                let lines = fit_lines(el, &display, content_cols, scale);
+                for (li, line) in lines.iter().enumerate() {
+                    let row = base_row + i64::from(li as u32 * scale);
+                    if row < 0 {
+                        continue;
+                    }
+                    for (i, ch) in line.chars().enumerate() {
+                        placements.push(Placement {
+                            col: ml + el.col + i as u32 * scale,
+                            row: row as u32,
+                            y_off_px,
+                            ch,
+                            scale,
+                            bold: el.style.bold,
+                            italic: el.style.italic,
+                            valign: el.style.valign,
+                            font: family.clone(),
+                        });
+                    }
+                }
+                max_bottom = max_bottom.max(base_row + i64::from(lines.len() as u32 * scale));
+                // Every line past the first pushes content below down by
+                // `scale` rows — the wrap half of the flow transform.
+                Ok((lines.len() as u32).saturating_sub(1) * scale)
+            }
+        }
+    };
+
+    // Emit a run of elements sharing one design row at an absolute base row;
+    // the row's wrap-extra is the MAX over its elements (two fields wrapping to
+    // 3 lines on the same row need 2 extra rows, not 4).
+    // Written as a macro because it must call `emit` (a capturing FnMut) —
+    // a second closure could not borrow it mutably at the same time.
+    macro_rules! emit_row_group {
+        ($els:expr, $j:ident, $scope:expr, $base:expr) => {{
+            let row = $els[$j].row;
+            let mut row_extra: u32 = 0;
+            while $j < $els.len() && $els[$j].row == row {
+                row_extra = row_extra.max(emit($els[$j], $scope, $base)?);
+                $j += 1;
+            }
+            row_extra
+        }};
+    }
+
+    // The top-down flow walk: interleave free rows and bands in design order.
+    let mut flow: i64 = 0;
+    let mut f = 0usize; // cursor into free_els
+    for (ri, region) in regions.iter().enumerate() {
+        // Free rows strictly above this band.
+        while f < free_els.len() && free_els[f].row < region.start_row {
+            let base = mt as i64 + i64::from(free_els[f].row) + flow;
+            flow += i64::from(emit_row_group!(free_els, f, data::Scope::default(), base));
+        }
+
+        let height = region.end_row.saturating_sub(region.start_row).max(1);
+        let enabled = region
+            .condition
+            .as_ref()
+            .map(|c| data::eval_condition(data::Scope::default(), variables, c))
+            .unwrap_or(true);
+        // Loop items, capped so a giant data array can't explode the placement
+        // list before the pixel guard runs.
+        let items: Option<&[Value]> = region.source.as_deref().and_then(|s| {
+            match data::resolve(variables, s) {
+                // Capped so a giant data array can't explode the placement
+                // list before the pixel guard runs. No real ticket loops this
+                // much; the same cap bounds preview_row's count/last chips.
+                Some(Value::Array(a)) => Some(&a[..a.len().min(data::MAX_LOOP)]),
+                _ => None,
+            }
+        });
+        let count = if !enabled {
+            0
+        } else if region.source.is_some() {
+            items.map(|a| a.len()).unwrap_or(0)
+        } else {
+            1
+        };
+        if count == 0 {
+            // Collapsed band: rows vanish, content below flows up. Row formulas
+            // are never evaluated (no cost, no divide-by-zero on absent data).
+            flow -= i64::from(height);
+            continue;
+        }
+
+        let els = &band_els[ri];
+        // Row values cost one object per iteration — skip the machinery when
+        // nothing in the band reads `row.*`. Formulas parse ONCE here; the
+        // loop below only evaluates the compiled ASTs, and every aggregate
+        // scan in every iteration draws from the single shared budget, so a
+        // hostile document can't multiply per-formula allowances into a stall.
+        let band_uses_row = els.iter().any(|el| element_references_row(el));
+        let compiled = if band_uses_row {
+            data::compile_row(&region.computed)
+        } else {
+            Vec::new()
+        };
+        let band_top = mt as i64 + i64::from(region.start_row) + flow;
+        let mut cursor = band_top;
+        for i in 0..count {
+            let loop_ctx: data::LoopCtx = items
+                .and_then(|a| a.get(i))
+                .and_then(|item| region.source.as_deref().map(|src| (src, i, item)));
+            // Row values: every loop iteration gets the implicit index/number/…;
+            // declared formulas evaluate on loop AND shown-conditional bands.
+            let row_vals: Option<Value> = band_uses_row.then(|| {
+                data::eval_row(
+                    variables,
+                    &compiled,
+                    loop_ctx,
+                    loop_ctx.map(|_| (i, count)),
+                    &budget,
+                )
+            });
+            let scope = data::Scope {
+                loop_ctx,
+                row: row_vals.as_ref(),
+            };
+            // Within one iteration, wrap extras shift this iteration's later
+            // rows down, exactly like free rows — so the iteration's height is
+            // its design height plus everything wrap inserted.
+            let mut iter_extra: i64 = 0;
+            let mut j = 0usize;
+            while j < els.len() {
+                let base = cursor + i64::from(els[j].row - region.start_row) + iter_extra;
+                iter_extra += i64::from(emit_row_group!(els, j, scope, base));
+            }
+            cursor += i64::from(height) + iter_extra;
+        }
+        // Net rows this band added versus its design height.
+        flow += (cursor - band_top) - i64::from(height);
+    }
+    // Free rows below the last band.
+    while f < free_els.len() {
+        let base = mt as i64 + i64::from(free_els[f].row) + flow;
+        flow += i64::from(emit_row_group!(free_els, f, data::Scope::default(), base));
     }
 
     // Total height honours trailing whitespace (min_rows) after the net flow delta.
-    let total_delta: i64 = plans.iter().map(|p| p.delta_after).sum();
+    let total_delta: i64 = flow;
     let design_floor = i64::from(mt) + i64::from(paper.min_rows.max(1)) + total_delta;
     let content_bottom = max_bottom.max(design_floor).max(i64::from(mt) + 1);
     let total_rows_i =
@@ -451,7 +593,7 @@ fn lay_out(
         });
     }
 
-    Ok((placements, blocks, total_rows_i as u32))
+    Ok((placements, blocks, total_rows_i as u32, markers))
 }
 
 /// A QR matrix scaled into a `side × side` pixel mask with a 4-module quiet zone.
@@ -522,9 +664,42 @@ fn placeholder_mask(w: u32, h: u32) -> Vec<bool> {
     m
 }
 
+/// Whether an element reads the row scope — its bound path or its condition
+/// targets `row` / `row.*`. Decides if a band pays for per-iteration row
+/// values at all.
+fn element_references_row(el: &Element) -> bool {
+    let is_row = |p: &str| p == "row" || p.starts_with("row.");
+    if el.condition.as_ref().is_some_and(|c| is_row(&c.var)) {
+        return true;
+    }
+    match &el.kind {
+        ElementKind::Variable { path, .. } => is_row(path),
+        ElementKind::Qr {
+            value,
+            from_variable,
+            ..
+        }
+        | ElementKind::Barcode {
+            value,
+            from_variable,
+            ..
+        } => *from_variable && is_row(value),
+        ElementKind::Image {
+            data,
+            from_variable,
+            ..
+        } => *from_variable && is_row(data),
+        ElementKind::Text { .. } | ElementKind::Marker { .. } => false,
+    }
+}
+
 /// Resolve an element to its final display string (variable lookup in the given
-/// loop context / faker, then number or date formatting).
-fn resolve_display(el: &Element, loop_ctx: data::LoopCtx, root: &Value) -> String {
+/// scope, then number or date formatting). An unresolved path renders empty
+/// unless `opts.placeholders` is on (editor preview), in which case a
+/// deterministic fake keeps the canvas lively. `row.*` paths never fake — a row
+/// value referenced outside its band is empty in every mode, so the editor
+/// can't paint a plausible value where print would show nothing.
+fn resolve_display(el: &Element, scope: data::Scope, root: &Value, opts: &RenderOptions) -> String {
     match &el.kind {
         // Static text renders verbatim. A value derived from other variables is
         // authored as a calculated variable and placed as a `Variable` element.
@@ -535,10 +710,8 @@ fn resolve_display(el: &Element, loop_ctx: data::LoopCtx, root: &Value) -> Strin
             date_format,
             ..
         } => {
-            let raw = match data::resolve_loop(loop_ctx, root, path) {
-                Some(v) => data::value_to_string(v),
-                None => data::fake_for(path),
-            };
+            let raw =
+                data::resolve_or_fake(scope, root, path, opts.placeholders).unwrap_or_default();
             if let Some(nf) = number {
                 format::format_number(&raw, nf)
             } else if let Some(df) = date_format {
@@ -568,6 +741,7 @@ fn fit_lines(el: &Element, display: &str, content_cols: u32, scale: u32) -> Vec<
             length,
             align,
             wrap,
+            max_lines,
             ..
         } => {
             // The band width in characters: what was asked, capped to the columns
@@ -577,7 +751,25 @@ fn fit_lines(el: &Element, display: &str, content_cols: u32, scale: u32) -> Vec<
             let band = (*length as usize).clamp(1, cap);
 
             if *wrap {
-                wrap_text(display, band)
+                let mut lines = wrap_text(display, band);
+                // Bound a runaway value: keep at most `max_lines` lines and mark
+                // the cut with a trailing `…` on the last kept line.
+                // 0 (the editor's "no limit") and absent both mean unbounded.
+                if let Some(m) = max_lines.filter(|m| *m > 0) {
+                    let m = m as usize;
+                    if lines.len() > m {
+                        lines.truncate(m);
+                        if let Some(last) = lines.last_mut() {
+                            let mut chars: Vec<char> = last.chars().collect();
+                            if chars.len() >= band {
+                                chars.truncate(band.saturating_sub(1));
+                            }
+                            chars.push('…');
+                            *last = chars.into_iter().collect();
+                        }
+                    }
+                }
+                lines
                     .into_iter()
                     .map(|line| fit_to_width(&line, band, *align))
                     .collect()

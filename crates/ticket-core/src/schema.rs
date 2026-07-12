@@ -90,7 +90,29 @@ pub struct Region {
     /// holds; otherwise those rows collapse and content below flows up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<Condition>,
+    /// Row-scoped formulas, evaluated once per loop iteration (in declaration
+    /// order, like doc-level `computed`). Values land under `row.<name>` for
+    /// elements inside this band — e.g. `line_total = round(qty * price, 2)`
+    /// gives every line its own amount column. On a conditional-only band
+    /// (`source: None`) they evaluate once when the band is shown. `row.*` never
+    /// resolves outside its own band. Empty (and absent from JSON) for a
+    /// document that doesn't use them, so v2 documents parse unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub computed: Vec<Computed>,
 }
+
+/// `row.*` names every looping band exposes implicitly (0-based `index`,
+/// 1-based `number`, total `count`, and `first`/`last` booleans). A declared
+/// [`Region::computed`] entry must not use these names — the editor rejects
+/// them at validation time, and the renderer ignores such an entry so the
+/// implicit value always wins deterministically.
+pub const RESERVED_ROW_NAMES: [&str; 5] = ["index", "number", "count", "first", "last"];
+
+/// The standardized [`ElementKind::Marker`] intent names consumers can map
+/// without guessing: paper cut, extra feed, buzzer, cash-drawer kick. Not a
+/// closed set — unknown names pass through and are ignored by consumers that
+/// can't act on them.
+pub const MARKER_NAMES: [&str; 4] = ["cut", "feed", "beep", "drawer"];
 
 /// A simple, non-programmer condition: `<var> <op> [value]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +299,21 @@ pub enum ElementKind {
         /// Height in character cells.
         height: u32,
     },
+    /// A zero-ink finishing marker: pure *intent* (`cut`, `feed`, `beep`,
+    /// `drawer`), reported to the consumer with its resolved absolute row via
+    /// [`crate::render::RenderOutput::markers`]. Renders nothing and occupies
+    /// no cells — only the document knows where a ticket (or a copy) ends, but
+    /// only the print consumer knows which command (if any) its printer
+    /// honors, so the renderer never emits device bytes. Honors `condition`
+    /// and expands inside loop bands like any element (a cut per copy falls
+    /// out for free). Unknown names are not an error: a consumer ignores what
+    /// it can't do.
+    Marker {
+        /// The intent name. `cut` / `feed` / `beep` / `drawer` are the
+        /// standardized set (see [`MARKER_NAMES`]); any other name passes
+        /// through for custom consumers.
+        name: String,
+    },
     /// A value pulled from the variable tree at render time.
     Variable {
         /// Dotted path into the variables object, e.g. `sale.total_amount`.
@@ -290,9 +327,15 @@ pub enum ElementKind {
         #[serde(default)]
         align: Align,
         /// When true, a value wider than `length` flows onto extra lines
-        /// (word-aware) instead of being truncated.
+        /// (word-aware) instead of being truncated. Content below moves down to
+        /// make room (wrapped lines participate in the flow transform).
         #[serde(default)]
         wrap: bool,
+        /// With `wrap`, keep at most this many lines; a longer value is cut on
+        /// the last kept line with a trailing `…`. `None` = unbounded. Guards
+        /// against a 4 KB value producing a metre of paper.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_lines: Option<u32>,
         /// Numeric formatting (decimals, rounding, thousands). Mutually exclusive
         /// with `date_format`; if both are set, `number` wins.
         #[serde(default, skip_serializing_if = "Option::is_none")]

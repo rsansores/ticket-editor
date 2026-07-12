@@ -1,7 +1,7 @@
 //! Render a sample receipt to a PNG file so the output can be eyeballed.
 //! `cargo run -p ticket-core --example sample -- /path/out.png`
 use serde_json::json;
-use ticket_core::{render_png, TicketDoc};
+use ticket_core::{render_png_with_options, Fonts, RenderOptions, TicketDoc};
 
 fn main() {
     let doc: TicketDoc = serde_json::from_value(json!({
@@ -25,13 +25,16 @@ fn main() {
     }))
     .unwrap();
 
-    // Half the fields provided as real data, the rest fall back to faker.
+    // Half the fields provided as real data, the rest fall back to faker —
+    // which is now opt-in (placeholder mode, what the editor preview uses).
+    // The plain render_png default is print mode: missing fields render empty.
     let data = json!({ "sale": {
         "product": "Dog Food",
         "total_amount": 1294.505,
         "legend": "This is not a fiscal receipt. Please keep your ticket for any inquiry about your purchase.",
     } });
-    let png = render_png(&doc, &data).unwrap();
+    let fonts = Fonts::builtin().unwrap();
+    let png = render_png_with_options(&doc, &data, &fonts, &RenderOptions::placeholders()).unwrap();
 
     let out = std::env::args()
         .nth(1)

@@ -6,10 +6,13 @@
 // Exported on its own so a host app can drop it into their own
 // Sheet/drawer instead of the inline rail if they prefer.
 import { computed, ref } from 'vue'
+import ConditionEditor from './ConditionEditor.vue'
 import { useT } from '../i18n'
 import { FONT_OPTIONS } from '../lib/fonts'
+import { MARKER_NAMES } from '../types'
 import type {
   Align,
+  Condition,
   Element,
   NumberFormat,
   Rounding,
@@ -29,8 +32,22 @@ const props = defineProps<{
   loopSources?: { path: string; key: string }[]
   /** Printable content width in characters, for the "Fit to width" action. */
   contentCols?: number
+  /** Selectable targets for the element's "show only if" condition. Includes
+   *  the band's row.* values when the element sits inside a loop band. */
+  condVars?: { path: string; key: string }[]
+  /** Paths valid for THIS element beyond the global catalog (its band's
+   *  row.* values), so they aren't flagged UNAVAILABLE. */
+  extraKnownPaths?: string[]
+  /** Whether the element already sits inside a band (the collapse-row sugar
+   *  would create a second, overlapping one — hidden in that case). */
+  inBand?: boolean
 }>()
-const emit = defineEmits<{ 'update:element': [el: Element]; remove: [id: string] }>()
+const emit = defineEmits<{
+  'update:element': [el: Element]
+  remove: [id: string]
+  /** Convert this element's condition into a one-row collapsible band. */
+  'collapse-row': [id: string]
+}>()
 
 // Image replace. Capture the target element at pick time so a selection change
 // during the async read can't apply the image to the wrong element. Validated
@@ -63,7 +80,11 @@ const loopPrefixes = computed(() => (props.loopSources ?? []).map((l) => `${l.pa
 // A loop-relative field (`sale.items.0.qty`) is "known" whenever its list is —
 // even if the sample array is empty, so it isn't derivable from `allVars`.
 function pathKnown(path: string): boolean {
-  return knownPaths.value.has(path) || loopPrefixes.value.some((p) => path.startsWith(p))
+  return (
+    knownPaths.value.has(path) ||
+    loopPrefixes.value.some((p) => path.startsWith(p)) ||
+    (props.extraKnownPaths ?? []).includes(path)
+  )
 }
 const unavailable = computed(() => {
   const e = el.value
@@ -174,8 +195,36 @@ const typeLabels: Record<string, string> = {
   image: 'typeImage',
   qr: 'typeQr',
   barcode: 'typeBarcode',
+  marker: 'typeMarker',
+}
+// Marker action picker: the standardized intents plus a custom escape hatch.
+const markerPresets = MARKER_NAMES.map((n) => ({
+  v: n,
+  key: `marker${n[0].toUpperCase()}${n.slice(1)}`,
+}))
+const markerIsPreset = computed(() =>
+  (MARKER_NAMES as readonly string[]).includes(el.value?.name ?? ''),
+)
+function setMarkerAction(v: string) {
+  patch({ name: v === '__custom' ? '' : v })
 }
 const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
+
+// --- "show only if" (element condition) -------------------------------------
+const condTargets = computed(() => props.condVars ?? props.allVars ?? [])
+function toggleCondition(on: boolean) {
+  if (!el.value) return
+  if (on) {
+    const c: Condition = el.value.condition ?? {
+      var: condTargets.value[0]?.path ?? '',
+      op: 'is_set',
+      value: '',
+    }
+    patch({ condition: c })
+  } else {
+    patch({ condition: undefined })
+  }
+}
 </script>
 
 <template>
@@ -425,6 +474,30 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
         </div>
       </template>
 
+      <!-- marker (finishing action: cut / feed / beep / drawer) -->
+      <template v-else-if="el.type === 'marker'">
+        <label class="te-field">
+          <span>{{ t('markerName') }}</span>
+          <select
+            class="te-input"
+            :value="markerIsPreset ? el.name : '__custom'"
+            @change="setMarkerAction(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="m in markerPresets" :key="m.v" :value="m.v">{{ t(m.key) }}</option>
+            <option value="__custom">{{ t('markerCustom') }}</option>
+          </select>
+        </label>
+        <label v-if="!markerIsPreset" class="te-field">
+          <span>{{ t('markerCustomName') }}</span>
+          <input
+            class="te-input"
+            :value="el.name"
+            @input="patch({ name: ($event.target as HTMLInputElement).value })"
+          />
+        </label>
+        <p class="te-marker-hint">{{ t('markerHint') }}</p>
+      </template>
+
       <!-- variable -->
       <template v-else-if="el.type === 'variable'">
         <label class="te-field">
@@ -454,6 +527,22 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
             <span>{{ t('wrap') }}</span>
           </label>
         </div>
+        <label v-if="el.wrap" class="te-field">
+          <span :title="t('maxLinesTip')">{{ t('maxLines') }}</span>
+          <input
+            class="te-input"
+            type="number"
+            min="0"
+            max="50"
+            :title="t('maxLinesTip')"
+            :value="el.max_lines ?? 0"
+            @input="
+              patch({
+                max_lines: +($event.target as HTMLInputElement).value || undefined,
+              })
+            "
+          />
+        </label>
         <button class="te-btn-replace" type="button" :title="t('fitToWidthTip')" @click="fitWidth">
           ⇥ {{ t('fitToWidth') }}
         </button>
@@ -652,6 +741,33 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
           />
         </label>
       </div>
+
+      <!-- show only if: hides the element in place. The "collapse row" action
+           converts it into a one-row band so the whole line disappears. -->
+      <label class="te-toggle">
+        <input
+          type="checkbox"
+          :checked="!!el.condition"
+          @change="toggleCondition(($event.target as HTMLInputElement).checked)"
+        />
+        <span>{{ t('showOnlyIfEl') }}</span>
+      </label>
+      <div v-if="el.condition" class="te-indent">
+        <ConditionEditor
+          :model-value="el.condition"
+          :vars="condTargets"
+          @update:model-value="patch({ condition: $event })"
+        />
+        <button
+          v-if="!inBand"
+          class="te-btn-replace te-collapse-row"
+          type="button"
+          :title="t('collapseRowTip')"
+          @click="emit('collapse-row', el.id)"
+        >
+          {{ t('collapseRow') }}
+        </button>
+      </div>
     </template>
   </div>
 </template>
@@ -773,5 +889,27 @@ const datePresets = ['DD/MM/YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY HH:mm', 'HH:mm:ss']
 }
 .te-btn-replace:hover {
   background: var(--te-accent);
+}
+.te-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.te-indent {
+  padding-left: 1.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.te-collapse-row {
+  align-self: flex-start;
+}
+.te-marker-hint {
+  margin: 0;
+  color: var(--te-muted-fg);
+  font-size: 0.74rem;
+  line-height: 1.4;
 }
 </style>

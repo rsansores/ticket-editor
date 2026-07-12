@@ -9,7 +9,7 @@
 //     and draggable — nothing is ever hidden or moved on its own;
 //   * overlaps are allowed but clearly flagged, never auto-resolved.
 import { computed, ref } from 'vue'
-import type { Element, Region, TicketDoc } from '../types'
+import { RESERVED_ROW_NAMES, type Element, type Region, type TicketDoc } from '../types'
 import { footprint, overlappingIds, resolvePath, type Footprint } from '../lib/layout'
 import { useT } from '../i18n'
 
@@ -57,6 +57,12 @@ function sampleValue(el: Element): string | undefined {
   return resolvePath(props.variables, el.path)
 }
 function computeFp(el: Element): Footprint {
+  if (el.type === 'marker') {
+    // Zero ink on paper; on the canvas it reads as a full-width one-row bar so
+    // it's visible, selectable and draggable like everything else.
+    const w = contentCols.value
+    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: 1 }
+  }
   if (el.type === 'image') {
     const w = Math.max(1, el.w ?? 1)
     const h = Math.max(1, el.h ?? 1)
@@ -104,7 +110,14 @@ const effectiveRows = computed(() => Math.max(lowestBottom.value, props.doc.pape
 const displayRows = computed(() => mt.value + effectiveRows.value + mb.value)
 
 const printableRight = computed(() => width.value - mr.value)
-const overlapping = computed(() => overlappingIds(props.doc.elements, contentCols.value, fp))
+const overlapping = computed(() =>
+  // Markers print nothing, so their full-width canvas bar can't "overlap".
+  overlappingIds(
+    props.doc.elements.filter((e) => e.type !== 'marker'),
+    contentCols.value,
+    fp,
+  ),
+)
 
 // ---- row gutter: insert / remove clean lines -------------------------------
 // Which content rows any element occupies (a scaled/wrapped element spans more
@@ -207,18 +220,31 @@ const loopPrefixes = computed(() => (props.loopSources ?? []).map((l) => `${l.pa
 function pathKnown(path: string): boolean {
   return knownPaths.value.has(path) || loopPrefixes.value.some((p) => path.startsWith(p))
 }
+// A `row.<name>` path is valid for an element inside a band that defines that
+// name — a declared calculated column, or (in a loop) an implicit like
+// row.number. Outside its band a row path is genuinely unavailable.
+function rowPathKnown(el: Element, path: string): boolean {
+  if (!path.startsWith('row.')) return false
+  const r = regionOf(el.row)
+  if (!r) return false
+  const name = path.slice('row.'.length)
+  if ((r.computed ?? []).some((c) => c.name === name)) return true
+  return !!r.source && (RESERVED_ROW_NAMES as readonly string[]).includes(name)
+}
 // An element that references a variable NOT in the catalog — e.g. a design
 // imported into a system with different variables. Flagged so the user can
 // remove it or point it at a real variable.
 function isUnavailable(el: Element): boolean {
-  if (el.type === 'variable') return !!el.path && !pathKnown(el.path)
+  const known = (p: string) => pathKnown(p) || rowPathKnown(el, p)
+  if (el.type === 'variable') return !!el.path && !known(el.path)
   if ((el.type === 'qr' || el.type === 'barcode') && el.from_variable)
-    return !!el.value && !pathKnown(el.value)
-  if (el.type === 'image' && el.from_variable) return !!el.data && !pathKnown(el.data)
+    return !!el.value && !known(el.value)
+  if (el.type === 'image' && el.from_variable) return !!el.data && !known(el.data)
   return false
 }
 function label(el: Element): string {
   if (isUnavailable(el)) return t('unavailable')
+  if (el.type === 'marker') return `✂ ${el.name ?? ''}`
   return el.type === 'variable' ? (el.path ?? '') : (el.content ?? '')
 }
 
@@ -375,8 +401,9 @@ function onPointerUp() {
             selected: el.id === selectedId,
             variable: el.type === 'variable',
             media: el.type === 'image' || el.type === 'qr' || el.type === 'barcode',
+            marker: el.type === 'marker',
             overlap: overlapping.has(el.id),
-            offpaper: isOffPaper(el),
+            offpaper: isOffPaper(el) && el.type !== 'marker',
             unavailable: isUnavailable(el),
           }"
           :style="{
@@ -625,6 +652,21 @@ function onPointerUp() {
   background: color-mix(in srgb, var(--te-primary) 12%, transparent);
   outline: 1px solid color-mix(in srgb, var(--te-primary) 45%, transparent);
   color: var(--te-primary);
+}
+.te-el.marker {
+  align-items: center;
+  justify-content: center;
+  border-top: 2px dashed color-mix(in srgb, var(--te-muted-fg) 55%, transparent);
+  outline: none;
+  background: transparent;
+  color: var(--te-muted-fg);
+  font-size: 0.68rem !important;
+  letter-spacing: 0.06em;
+}
+.te-el.marker .te-el-text {
+  background: var(--te-card);
+  padding: 0 0.4rem;
+  margin: auto;
 }
 .te-el.media {
   align-items: stretch;
