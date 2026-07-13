@@ -58,9 +58,10 @@ jobs:
         run: ./scripts/build-wasm.sh
 
       # --- Build the demo SPA from that fresh wasm ----------------------------
-      - uses: pnpm/action-setup@v6
+      # From the editor's `packageManager` pin, not a floating major — see ci.yml.
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
-          version: 11
+          package_json_file: packages/ticket-editor/package.json
       - uses: actions/setup-node@v6
         with:
           node-version: 22
