@@ -46,7 +46,10 @@ const doc = ref<TicketDoc>({
     { name: 'sales_line', formula: 'concat(count(sale.movements), " payments in the cut")' },
   ],
   paper: {
-    width_chars: 40,
+    // 48 cols x 12 px = 576 dots = 80 mm paper, the retail/POS standard. The old
+    // default (40 cols) came to 480 dots, which is no printer's width — so the
+    // editor opened already showing its own dot-width warning.
+    width_chars: 48,
     margin_left_chars: 1,
     margin_right_chars: 1,
     margin_top_lines: 1,

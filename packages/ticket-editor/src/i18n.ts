@@ -27,6 +27,11 @@ const en: MessageTable = {
   fitToWidthTip: "Stretch this field's reserved width to the paper's right edge",
   save: 'Save',
   saving: 'Saving…',
+  paper: 'Paper',
+  paperOption: '{mm} mm ({dots} dots)',
+  paperCustom: 'Custom…',
+  paperTip:
+    "The roll you loaded. Sets the column count so the grid lands exactly on the printer's dot width — get this wrong and the ticket prints the wrong size. Pick Custom for a printer neither preset fits.",
   print: '🖨 Print',
   printing: 'Preparing…',
   printHint:
@@ -227,6 +232,11 @@ const es: MessageTable = {
   fitToWidthTip: 'Extiende el ancho reservado de este campo hasta el borde derecho',
   save: 'Guardar',
   saving: 'Guardando…',
+  paper: 'Papel',
+  paperOption: '{mm} mm ({dots} puntos)',
+  paperCustom: 'Personalizado…',
+  paperTip:
+    'El rollo que cargaste. Ajusta el número de columnas para que la rejilla caiga exactamente en el ancho de puntos de la impresora; si no, el ticket sale con el tamaño equivocado. Elige Personalizado si ninguna opción encaja.',
   print: '🖨 Imprimir',
   printing: 'Preparando…',
   printHint:

@@ -21,6 +21,7 @@ import {
   unresolvedPaths,
 } from './composables/useRenderer'
 import { printRaster } from './lib/print'
+import { PAPER_PRESETS, presetForDotWidth, STANDARD_DOT_WIDTHS } from './lib/paper'
 import { provideEditorI18n, type Messages } from './i18n'
 import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
@@ -676,11 +677,24 @@ function removeRegion(id: string) {
 }
 
 // Raster width in printer dots. Thermal heads have a fixed native dot width
-// (203 dpi: 384 = 58 mm, 576 = 80 mm); anything else gets scaled by the driver
-// and prints fuzzy. Worth far more than a contrast slider — warn on mismatch.
-const STANDARD_DOT_WIDTHS = [384, 576]
+// (203 dpi: 384 = 58 mm paper, 576 = 80 mm); anything else gets scaled by the
+// driver and prints fuzzy. Worth far more than a contrast slider.
 const dotWidth = computed(() => doc.value.paper.width_chars * (doc.value.paper.cell_width_px ?? 12))
 const dotWidthOk = computed(() => STANDARD_DOT_WIDTHS.includes(dotWidth.value))
+
+// Pick the paper, get the columns — not the other way round. Landing the grid on
+// the printer's dot width is a constraint the user cannot be expected to solve in
+// their head, and getting it wrong is invisible until the paper comes out narrow.
+// Columns stay editable: a denser font (a smaller cell) is a legitimate thing to
+// want, and 'custom' covers the rare printer neither preset fits.
+const paperId = computed(() => presetForDotWidth(dotWidth.value)?.id ?? 'custom')
+
+function selectPaper(id: string) {
+  const preset = PAPER_PRESETS.find((p) => p.id === id)
+  if (!preset) return // 'custom' — leave the document alone, the user drives.
+  doc.value.paper.width_chars = preset.cols
+  doc.value.paper.cell_width_px = preset.cellPx
+}
 
 // Printable content width in characters — used by a field's per-element
 // "Fit to width" action in the modifier panel.
@@ -726,6 +740,20 @@ async function save() {
   <div class="te-root te-editor">
     <header class="te-toolbar">
       <strong class="te-title">{{ t('title') }}</strong>
+      <label class="te-inline"
+        >{{ t('paper') }}
+        <select
+          class="te-num"
+          :value="paperId"
+          :title="t('paperTip')"
+          @change="selectPaper(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="p in PAPER_PRESETS" :key="p.id" :value="p.id">
+            {{ t('paperOption', { mm: p.paperMm, dots: p.dots }) }}
+          </option>
+          <option value="custom">{{ t('paperCustom') }}</option>
+        </select>
+      </label>
       <label class="te-inline"
         >{{ t('width') }}
         <input
