@@ -16,7 +16,7 @@ The raw node under `/dev/bus/usb` is root-owned, so your user cannot open it.
 Grant access with a udev rule (substitute your own vendor/product id):
 
 ```bash
-sudo tee /etc/udev/rules.d/99-escpos-webusb.rules >/dev/null <<'RULE'
+sudo tee /etc/udev/rules.d/70-escpos-webusb.rules >/dev/null <<'RULE'
 # Let the logged-in user talk to this USB printer from a browser (WebUSB).
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0471", ATTRS{idProduct}=="0055", MODE="0660", TAG+="uaccess"
 RULE
@@ -26,6 +26,32 @@ sudo udevadm trigger
 ```
 
 Then **unplug and replug the printer** (the rule applies when the device appears).
+
+> **The `70-` in the filename is load bearing — do not use `99-`.**
+> `TAG+="uaccess"` is not a magic attribute that grants access by itself. It is a
+> flag that systemd *looks for*, in `/usr/lib/udev/rules.d/73-seat-late.rules`:
+>
+> ```
+> TAG=="uaccess|xaccess-*", ENV{MAJOR}!="", RUN{builtin}+="uaccess"
+> ```
+>
+> udev runs rule files in **lexical order**. A rule in `99-*` sets the tag long
+> after `73-*` has already checked for it, so nothing ever reads it and no ACL is
+> applied. The file has to sort **before 73**. The failure is quiet and
+> convincing: the node's mode and group visibly change, so the rule looks like it
+> worked — but `getfacl` shows no entry for your user, and the browser still says
+> "Access denied".
+
+Verify it took effect before blaming the browser — you want a `user:<you>:rw-` line:
+
+```bash
+D=/sys/bus/usb/devices/1-9   # the sysfs path for your printer
+getfacl -p "$(printf '/dev/bus/usb/%03d/%03d' "$(cat $D/busnum)" "$(cat $D/devnum)")"
+```
+
+`uaccess` also requires an **active local session on a seat** (`loginctl` should
+show your graphical session with `seat0`). Over SSH, or in a session with no
+seat, it grants nothing — add yourself to the group that owns the node instead.
 
 ## 2. "…is holding this printer" when claiming the interface
 
