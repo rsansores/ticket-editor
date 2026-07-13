@@ -5,7 +5,7 @@
 // host's own drawers), the canvas has a zoom control, and placement is
 // non-destructive — a manual "Fit to width" is the only thing that ever moves
 // elements in bulk, and only when clicked.
-import { computed, onScopeDispose, ref, toRaw, watch } from 'vue'
+import { computed, ref, toRaw, watch } from 'vue'
 import VariableTree from './components/VariableTree.vue'
 import GridCanvas from './components/GridCanvas.vue'
 import ModifierPanel from './components/ModifierPanel.vue'
@@ -20,8 +20,8 @@ import {
   renderPng,
   unresolvedPaths,
 } from './composables/useRenderer'
-import { cleanupPrintFrames, printRaster } from './lib/print'
-import { PAPER_PRESETS, presetForDotWidth, STANDARD_DOT_WIDTHS } from './lib/paper'
+import { ticketPdf } from './lib/pdf'
+import { DOTS_PER_MM, PAPER_PRESETS, presetForDotWidth, STANDARD_DOT_WIDTHS } from './lib/paper'
 import { provideEditorI18n, type Messages } from './i18n'
 import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
@@ -703,11 +703,15 @@ const contentCols = computed(() => {
   return Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
 })
 
-// Print through the OS print dialog. The printer is whatever the operating
-// system already knows about — installing a POS printer is the OS's job, and
-// deliberately not ours. Renders in PRINT mode (placeholders off): a ticket you
-// hold in your hand must show what the customer would get, never a plausible
-// fake value in place of a missing one.
+// Hand the ticket to the OS as a PDF, sized to the paper.
+//
+// Not the browser's print dialog: it draws its own headers and footers (URL,
+// timestamp, page title) from a checkbox we cannot reach, and its "Margins:
+// Default" overrides the CSS that would reserve no room for them. A PDF has an
+// authoritative page size and prints exactly what it says.
+//
+// Renders in PRINT mode (placeholders off): a ticket someone holds must show
+// what the customer would get, never a plausible fake for a missing value.
 const printing = ref(false)
 const printError = ref('')
 
@@ -716,17 +720,26 @@ async function print() {
   printError.value = ''
   try {
     const png = await renderPng(snapshot(doc.value), props.variables, false)
-    await printRaster(png, dotWidth.value)
+    const pdf = await ticketPdf(png, DOTS_PER_MM)
+    const url = URL.createObjectURL(pdf)
+    // A new tab, opened from the click, so no popup blocker: the PDF viewer
+    // shows it at true size and its own Print prints it clean.
+    const opened = window.open(url, '_blank')
+    if (!opened) {
+      // Popups blocked after all — fall back to a download.
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'ticket.pdf'
+      a.click()
+    }
+    // The tab has the blob; give it time to load before dropping our handle.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   } catch (e) {
     printError.value = e instanceof Error ? e.message : String(e)
   } finally {
     printing.value = false
   }
 }
-
-// The print frame lives on document.body, outside the Vue tree, so nothing
-// unmounts it for us — same reason PreviewPane revokes its blob URL here.
-onScopeDispose(cleanupPrintFrames)
 
 const saving = ref(false)
 async function save() {
