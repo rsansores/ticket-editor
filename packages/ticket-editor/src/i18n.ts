@@ -27,6 +27,13 @@ const en: MessageTable = {
   fitToWidthTip: "Stretch this field's reserved width to the paper's right edge",
   save: 'Save',
   saving: 'Saving…',
+  testPrint: '🖨 Test print',
+  printing: 'Printing…',
+  printUnsupported: 'Test print needs Chrome or Edge (WebUSB).',
+  printBusy:
+    'Your operating system is holding this printer, so the browser cannot open it. On Linux, unbind usblp; on Windows, switch the device to WinUSB (Zadig). This is a one-time setup.',
+  printNoEndpoint: 'This device has no bulk endpoint to print to — is it really a USB printer?',
+  printOk: 'Sent to the printer.',
   railVariables: 'Variables',
   searchVars: 'Search variables…',
   noVarMatches: 'No matches',
@@ -223,6 +230,14 @@ const es: MessageTable = {
   fitToWidthTip: 'Extiende el ancho reservado de este campo hasta el borde derecho',
   save: 'Guardar',
   saving: 'Guardando…',
+  testPrint: '🖨 Impresión de prueba',
+  printing: 'Imprimiendo…',
+  printUnsupported: 'La impresión de prueba necesita Chrome o Edge (WebUSB).',
+  printBusy:
+    'El sistema operativo tiene tomada la impresora y el navegador no puede abrirla. En Linux, desvincula usblp; en Windows, cambia el dispositivo a WinUSB (Zadig). Es una configuración de una sola vez.',
+  printNoEndpoint:
+    'Este dispositivo no tiene un endpoint bulk para imprimir. ¿Es realmente una impresora USB?',
+  printOk: 'Enviado a la impresora.',
   railVariables: 'Variables',
   searchVars: 'Buscar variables…',
   noVarMatches: 'Sin coincidencias',

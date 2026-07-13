@@ -14,7 +14,7 @@
     "noEmit": true,
     "declaration": true,
     "declarationDir": "dist",
-    "types": []
+    "types": ["w3c-web-usb"]
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "demo/**/*.ts", "demo/**/*.vue"],
   "exclude": ["src/wasm/**"]

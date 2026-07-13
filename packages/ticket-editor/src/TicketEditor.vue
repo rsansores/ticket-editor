@@ -13,8 +13,14 @@ import BandPanel from './components/BandPanel.vue'
 import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
 import TypeTag from './components/TypeTag.vue'
+import * as webusb from './composables/useWebUsbPrinter'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
-import { previewComputed, previewRowComputed, unresolvedPaths } from './composables/useRenderer'
+import {
+  previewComputed,
+  previewRowComputed,
+  renderEscpos,
+  unresolvedPaths,
+} from './composables/useRenderer'
 import { provideEditorI18n, type Messages } from './i18n'
 import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
@@ -683,6 +689,36 @@ const contentCols = computed(() => {
   return Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
 })
 
+// --- Test print over WebUSB (Chrome/Edge only) --------------------------------
+// The person designing a ticket is usually nowhere near the printer that will
+// produce it, and a preview — however faithful — is not paper. This renders the
+// document through the SAME encoder the backend links natively and pushes the
+// bytes straight at a USB printer, so the trust question ("will it really come
+// out like that?") gets answered by the printer instead of by us.
+const printSupported = webusb.isSupported()
+const printing = ref(false)
+const printMsg = ref('')
+
+async function testPrint() {
+  printing.value = true
+  printMsg.value = ''
+  try {
+    // Print mode, and no cut: a test print must show what the customer would
+    // actually get, and must never fire a blade on a printer that may not have
+    // one (which latches an error and stops the printer until it is power-cycled).
+    const bytes = await renderEscpos(snapshot(doc.value), props.variables, 'none')
+    await webusb.printBytes(bytes)
+    printMsg.value = t('printOk')
+  } catch (e) {
+    if (e instanceof webusb.PrinterBusyError) printMsg.value = t('printBusy')
+    else if (e instanceof webusb.NoBulkEndpointError) printMsg.value = t('printNoEndpoint')
+    else if (e instanceof DOMException && e.name === 'NotFoundError') printMsg.value = ''
+    else printMsg.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    printing.value = false
+  }
+}
+
 const saving = ref(false)
 async function save() {
   if (!props.onSave) return
@@ -736,6 +772,16 @@ async function save() {
         {{ t('dotWidthWarn', { px: dotWidth }) }}
       </span>
       <div class="te-spacer" />
+      <span v-if="printMsg" class="te-chip te-chip-warn" :title="printMsg">{{ printMsg }}</span>
+      <button
+        class="te-btn te-btn-ghost"
+        type="button"
+        :disabled="!printSupported || printing"
+        :title="printSupported ? undefined : t('printUnsupported')"
+        @click="testPrint"
+      >
+        {{ printing ? t('printing') : t('testPrint') }}
+      </button>
       <button
         v-if="onSave"
         class="te-btn te-btn-primary"

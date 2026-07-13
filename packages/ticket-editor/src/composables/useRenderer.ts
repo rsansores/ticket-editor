@@ -3,6 +3,7 @@
 
 import init, {
   render_png,
+  render_escpos,
   schema_version,
   preview_computed,
   preview_row_computed,
@@ -112,6 +113,32 @@ export async function renderPng(
   await ensureFontsLoaded(doc)
   const varsJson = variables == null ? '' : JSON.stringify(variables)
   return render_png(JSON.stringify(doc), varsJson, placeholders)
+}
+
+/**
+ * Render a document straight to the ESC/POS byte stream a thermal printer takes
+ * — the same encoder the backend links natively, so these bytes are what the
+ * real print path would emit.
+ *
+ * Deliberately renders in PRINT mode (no placeholders): a test print is a print,
+ * so a variable missing from the data must come out empty, exactly as it would
+ * on a customer's receipt — never a plausible fake.
+ *
+ * `cut` defaults to none and fails closed. A cut sent to a printer whose cutter
+ * is absent or disabled latches an error that stops the printer until it is
+ * power-cycled, so only pass a mode for a printer you KNOW has a cutter.
+ *
+ * @throws the renderer's error message (bad doc, image too large, missing font, …)
+ */
+export async function renderEscpos(
+  doc: TicketDoc,
+  variables?: unknown,
+  cut: 'none' | 'partial' | 'full' = 'none',
+): Promise<Uint8Array> {
+  await ensureInit()
+  await ensureFontsLoaded(doc)
+  const varsJson = variables == null ? '' : JSON.stringify(variables)
+  return render_escpos(JSON.stringify(doc), varsJson, cut)
 }
 
 /**

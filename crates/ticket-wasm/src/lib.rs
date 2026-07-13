@@ -59,6 +59,45 @@ pub fn render_png(
     })
 }
 
+/// Render a ticket straight to the ESC/POS byte stream a thermal printer takes.
+///
+/// The browser can hand these bytes to a USB printer over WebUSB, so a template
+/// can be test-printed on real paper from the editor — without a backend, and
+/// without trusting that the preview and the print agree. They agree by
+/// construction: this is the same encoder the backend links natively.
+///
+/// * `cut` — `"partial"`, `"full"`, or anything else (including `""`) for **no
+///   cut**, which is the default and fails closed. A cut sent to a printer whose
+///   cutter is absent or disabled latches an error that stops the printer until
+///   it is power-cycled. Only pass a cut mode for a printer you know has a cutter.
+///
+/// Unlike [`render_png`], this renders in **print mode**: a variable path that
+/// does not resolve comes out empty, never a plausible fake. A test print is a
+/// print — it must show what the customer would actually get.
+#[wasm_bindgen]
+pub fn render_escpos(doc_json: &str, variables_json: &str, cut: &str) -> Result<Vec<u8>, JsError> {
+    let doc: ticket_core::TicketDoc =
+        serde_json::from_str(doc_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let variables: serde_json::Value = if variables_json.trim().is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(variables_json).map_err(|e| JsError::new(&e.to_string()))?
+    };
+    let profile = ticket_core::PrinterProfile {
+        cut: ticket_core::CutMode::parse(cut),
+    };
+    with_fonts(|fonts| {
+        ticket_core::render_escpos(
+            &doc,
+            &variables,
+            fonts,
+            &ticket_core::RenderOptions::default(),
+            &profile,
+        )
+        .map_err(|e| JsError::new(&e.to_string()))
+    })
+}
+
 /// The variable paths a document references that do NOT resolve in the given
 /// data — what powers the editor's "N fields missing from your sample data"
 /// warning and a backend's save-time template validation. Returns a JSON array
