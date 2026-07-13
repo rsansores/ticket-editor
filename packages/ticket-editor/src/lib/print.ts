@@ -14,7 +14,7 @@
 // worse than not printing at all: it makes people distrust a preview that was
 // correct.
 //
-// So the page pins the image to its true PHYSICAL width and forbids margins.
+// So the page pins the image to its true PHYSICAL size and forbids margins.
 // Thermal printers are 203 dpi, i.e. exactly 8 dots per millimetre, so a raster
 // `dots` wide is `dots / 8` millimetres wide on paper. Give the browser that and
 // there is nothing left for it to scale.
@@ -29,6 +29,19 @@
 
 /** Thermal printers are 203 dpi. That is 8 dots per millimetre, exactly. */
 const DOTS_PER_MM = 8
+
+/**
+ * The raster's size in dots, straight out of the PNG header.
+ *
+ * A PNG always opens with an 8-byte signature and then the IHDR chunk, whose
+ * first two fields are width and height as big-endian u32 — at offsets 16 and
+ * 20. No decoding needed, and we need the numbers *before* the image loads,
+ * because they go into the stylesheet.
+ */
+function pngSize(png: Uint8Array): { width: number; height: number } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  return { width: view.getUint32(16), height: view.getUint32(20) }
+}
 
 /**
  * Fallback teardown, if `afterprint` never fires. It is well supported, but a
@@ -67,9 +80,22 @@ export function paperWidthMm(dotWidth: number): number {
  * `png` is the raster; `dotWidth` is what it was rendered at. Resolves once the
  * dialog has been handed the page — not when anything has been printed, which
  * the browser will not tell us.
+ *
+ * # The page is sized in both dimensions, deliberately
+ *
+ * `size: <width> auto` looks like the obvious way to say "a roll: fix the width,
+ * let the length run" — and it is **invalid CSS**. The property takes one or two
+ * lengths, *or* the keyword `auto`, never a mixture. Browsers drop the whole
+ * declaration and fall back to Letter/A4, which is how a receipt ends up centred
+ * on a sheet of office paper.
+ *
+ * So we give it both, and take the height from the raster itself rather than
+ * asking anyone for it: the ticket's length is whatever the renderer just drew.
  */
 export async function printRaster(png: Uint8Array, dotWidth: number): Promise<void> {
   const widthMm = paperWidthMm(dotWidth)
+  // The page must be exactly the ticket — see the `@page` note below.
+  const heightMm = pngSize(png).height / DOTS_PER_MM
   const blob = new Blob([png as BlobPart], { type: 'image/png' })
   const url = URL.createObjectURL(blob)
 
@@ -97,9 +123,11 @@ export async function printRaster(png: Uint8Array, dotWidth: number): Promise<vo
   <head>
     <meta charset="utf-8">
     <style>
-      /* Continuous roll: fix the width, let the length run. Zero margin — the
-         document already carries whatever margins it wants, in character cells. */
-      @page { size: ${widthMm}mm auto; margin: 0; }
+      /* The page IS the ticket: both dimensions, in millimetres. See the note on
+         printRaster for why a width with an 'auto' height is not an option.
+         Zero margin — the document already carries whatever margins it wants,
+         in character cells. */
+      @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
       html, body { margin: 0; padding: 0; background: #fff; }
       img {
         display: block;
