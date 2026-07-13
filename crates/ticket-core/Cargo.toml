@@ -18,6 +18,7 @@ png = { workspace = true }
 qrcodegen = { workspace = true }
 barcoders = { workspace = true }
 base64 = "0.22"
+image = { workspace = true, optional = true }
 
 [features]
 # Embed the editor's extra monospace font families into the crate so a backend
@@ -25,7 +26,16 @@ base64 = "0.22"
 # same bytes the browser preview uses. Off by default — a backend that only uses
 # the built-in font pays nothing.
 bundled-fonts = []
+# `normalize_images()`: rewrite a document's embedded images as 1-bit PNGs at
+# their exact target size, so it renders identically from far fewer bytes. Off by
+# default — it pulls in `image` to decode JPEG/WebP sources, which a build that
+# only renders (the wasm preview, an edge device) has no use for. PNG sources go
+# through this crate's own decoder either way.
+normalize = ["dep:image"]
 
 [dev-dependencies]
 png = { workspace = true }
 base64 = "0.22"
+# Only to build the JPEG/WebP fixtures the `normalize` tests feed in. The crate
+# itself never encodes with it.
+image = { workspace = true }

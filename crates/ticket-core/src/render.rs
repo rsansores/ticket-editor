@@ -114,7 +114,7 @@ pub struct RenderOutput {
 
 /// Hard ceiling on any single raster (the whole canvas, or one logo/QR block),
 /// in pixels (~64 megapixels). Bounds memory against adversarial documents.
-const MAX_PIXELS: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 
 /// One laid-out character to draw.
 struct Placement {
