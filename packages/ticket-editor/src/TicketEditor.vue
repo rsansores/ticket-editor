@@ -747,7 +747,7 @@ async function save() {
       <label class="te-inline"
         >{{ t('paper') }}
         <select
-          class="te-num"
+          class="te-select"
           :value="paperId"
           :title="t('paperTip')"
           @change="selectPaper(($event.target as HTMLSelectElement).value)"
@@ -799,12 +799,26 @@ async function save() {
         printError
       }}</span>
       <button
-        class="te-btn te-btn-ghost"
+        class="te-btn te-btn-ghost te-btn-icon"
         type="button"
         :disabled="printing"
         :title="t('printHint')"
         @click="print"
       >
+        <svg
+          class="te-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M6 9V3h12v6" />
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+          <rect x="6" y="14" width="12" height="7" rx="1" />
+        </svg>
         {{ printing ? t('printing') : t('print') }}
       </button>
       <button
@@ -1016,6 +1030,31 @@ async function save() {
 .te-muted {
   color: var(--te-muted-fg);
 }
+.te-select {
+  /* Wide enough for "80 mm (576 dots)" plus room for the native chevron, which
+     sat on top of the text when this reused .te-num (3.6rem, sized for a
+     two-digit number box). */
+  padding: 0.25rem 0.4rem;
+  padding-right: 1.6rem;
+  border: 1px solid var(--te-input);
+  border-radius: calc(var(--te-radius) - 2px);
+  background: var(--te-card);
+  color: inherit;
+  font: inherit;
+}
+
+.te-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.te-icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: none;
+}
+
 .te-num {
   width: 3.6rem;
   padding: 0.25rem 0.4rem;

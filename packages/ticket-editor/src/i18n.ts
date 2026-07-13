@@ -32,7 +32,7 @@ const en: MessageTable = {
   paperCustom: 'Custom…',
   paperTip:
     "The roll you loaded. Sets the column count so the grid lands exactly on the printer's dot width — get this wrong and the ticket prints the wrong size. Pick Custom for a printer neither preset fits.",
-  print: '🖨 Print',
+  print: 'Print',
   printing: 'Preparing…',
   printHint:
     'Prints through your operating system. Pick your POS printer in the dialog (or Save as PDF). Turn OFF any "fit to page" or scaling so the ticket comes out at its true size.',
@@ -237,7 +237,7 @@ const es: MessageTable = {
   paperCustom: 'Personalizado…',
   paperTip:
     'El rollo que cargaste. Ajusta el número de columnas para que la rejilla caiga exactamente en el ancho de puntos de la impresora; si no, el ticket sale con el tamaño equivocado. Elige Personalizado si ninguna opción encaja.',
-  print: '🖨 Imprimir',
+  print: 'Imprimir',
   printing: 'Preparando…',
   printHint:
     'Imprime a través del sistema operativo. Elige tu impresora POS en el diálogo (o Guardar como PDF). Desactiva cualquier "ajustar a la página" o escalado para que el ticket salga a tamaño real.',
