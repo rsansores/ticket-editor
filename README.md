@@ -195,6 +195,32 @@ no panics on hostile input).
   authored via a git-style lane and configured in the side drawer.
 - Non-destructive editing: free placement, insert/remove rows, overflow zone,
   overlap flags, "fit to width".
+- **Shrink a document for transport** (`ticket-core`, `normalize` feature): bake
+  every embedded image down to the 1-bit PNG the printer was going to get anyway.
+  Renders identically, typically an order of magnitude smaller — see below.
+
+### Shipping a document to a device
+
+A logo pasted into the editor is an 8-bit RGBA PNG: ~24 bits per pixel, of which
+a monochrome printer keeps one. That is free if the document renders where it
+lives, and expensive if it has to cross a metered link, a serial bus or a
+phone-relayed BLE tunnel on every save.
+
+`ticket_core::normalize_images` (behind the `normalize` cargo feature) does the
+renderer's image work up front — decode, scale to the target box, threshold or
+dither — and writes each result back as a 1-bit PNG. The renderer's own pass then
+degenerates to a no-op, so the ticket comes out pixel-for-pixel the same:
+
+```rust
+let mut doc: TicketDoc = serde_json::from_str(&json)?;
+let stats = ticket_core::normalize_images(&mut doc)?;   // e.g. 102 kB -> 13 kB
+send_to_device(&serde_json::to_string(&doc)?);
+```
+
+It also accepts the formats the renderer cannot (JPEG, WebP) and canonicalizes
+them to PNG — so a WebP logo, which `render` draws as a placeholder frame, prints
+properly once normalized. Keep your original document if you want to re-tune a
+threshold later; normalize on the way out.
 
 Loops and conditionals are marked in a git-style lane next to the rows and
 configured in the drawer — no template language to learn:

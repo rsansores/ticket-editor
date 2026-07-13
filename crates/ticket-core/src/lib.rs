@@ -38,11 +38,15 @@ mod expr;
 mod font;
 mod format;
 mod image;
+#[cfg(feature = "normalize")]
+mod normalize;
 mod qr;
 mod render;
 mod schema;
 
 pub use font::{FontFaces, Fonts, DEFAULT_FAMILY};
+#[cfg(feature = "normalize")]
+pub use normalize::{normalize_images, Error as NormalizeError, Stats as NormalizeStats};
 pub use render::{
     render, render_png, render_png_with_fonts, render_png_with_options, MarkerHit, RenderError,
     RenderOptions, RenderOutput,

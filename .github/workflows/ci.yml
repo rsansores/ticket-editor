@@ -43,6 +43,12 @@ jobs:
       # Whole workspace, so ticket-printable's derive tests run too — not just ticket-core.
       - name: Test
         run: cargo test --workspace
+      # The optional features are off by default, so the default workspace run
+      # above never compiles them. Gate them explicitly or they rot.
+      - name: Clippy (optional features)
+        run: cargo clippy -p ticket-core --all-features --all-targets -- -D warnings
+      - name: Test (optional features)
+        run: cargo test -p ticket-core --all-features
 
   web:
     name: Web (format, lint, type-check, knip)

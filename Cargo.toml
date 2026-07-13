@@ -26,6 +26,10 @@ ab_glyph = "0.2"
 png = "0.18"
 qrcodegen = "1.8"
 barcoders = { version = "2", default-features = false }
+# Only for `ticket-core/normalize`, to decode the formats a browser file-picker
+# yields that `png` cannot. PNG is decoded by ticket-core itself, so `image`'s
+# own PNG codec is deliberately not enabled — one decoder, one set of pixels.
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
 
 # Optimize the wasm build for size (applies to the whole workspace release build,
 # which is what `build-wasm.sh` uses for the browser bundle).
