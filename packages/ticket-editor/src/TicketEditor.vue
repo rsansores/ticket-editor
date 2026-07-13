@@ -14,7 +14,13 @@ import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
 import TypeTag from './components/TypeTag.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
-import { previewComputed, previewRowComputed, unresolvedPaths } from './composables/useRenderer'
+import {
+  previewComputed,
+  previewRowComputed,
+  renderPng,
+  unresolvedPaths,
+} from './composables/useRenderer'
+import { printRaster } from './lib/print'
 import { provideEditorI18n, type Messages } from './i18n'
 import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
@@ -683,6 +689,27 @@ const contentCols = computed(() => {
   return Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
 })
 
+// Print through the OS print dialog. The printer is whatever the operating
+// system already knows about — installing a POS printer is the OS's job, and
+// deliberately not ours. Renders in PRINT mode (placeholders off): a ticket you
+// hold in your hand must show what the customer would get, never a plausible
+// fake value in place of a missing one.
+const printing = ref(false)
+const printError = ref('')
+
+async function print() {
+  printing.value = true
+  printError.value = ''
+  try {
+    const png = await renderPng(snapshot(doc.value), props.variables, false)
+    await printRaster(png, dotWidth.value)
+  } catch (e) {
+    printError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    printing.value = false
+  }
+}
+
 const saving = ref(false)
 async function save() {
   if (!props.onSave) return
@@ -736,6 +763,18 @@ async function save() {
         {{ t('dotWidthWarn', { px: dotWidth }) }}
       </span>
       <div class="te-spacer" />
+      <span v-if="printError" class="te-chip te-chip-warn" :title="printError">{{
+        printError
+      }}</span>
+      <button
+        class="te-btn te-btn-ghost"
+        type="button"
+        :disabled="printing"
+        :title="t('printHint')"
+        @click="print"
+      >
+        {{ printing ? t('printing') : t('print') }}
+      </button>
       <button
         v-if="onSave"
         class="te-btn te-btn-primary"

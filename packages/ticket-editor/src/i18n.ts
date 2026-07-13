@@ -27,6 +27,10 @@ const en: MessageTable = {
   fitToWidthTip: "Stretch this field's reserved width to the paper's right edge",
   save: 'Save',
   saving: 'Saving…',
+  print: '🖨 Print',
+  printing: 'Preparing…',
+  printHint:
+    'Prints through your operating system. Pick your POS printer in the dialog (or Save as PDF). Turn OFF any "fit to page" or scaling so the ticket comes out at its true size.',
   railVariables: 'Variables',
   searchVars: 'Search variables…',
   noVarMatches: 'No matches',
@@ -223,6 +227,10 @@ const es: MessageTable = {
   fitToWidthTip: 'Extiende el ancho reservado de este campo hasta el borde derecho',
   save: 'Guardar',
   saving: 'Guardando…',
+  print: '🖨 Imprimir',
+  printing: 'Preparando…',
+  printHint:
+    'Imprime a través del sistema operativo. Elige tu impresora POS en el diálogo (o Guardar como PDF). Desactiva cualquier "ajustar a la página" o escalado para que el ticket salga a tamaño real.',
   railVariables: 'Variables',
   searchVars: 'Buscar variables…',
   noVarMatches: 'Sin coincidencias',
