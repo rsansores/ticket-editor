@@ -30,8 +30,25 @@
 /** Thermal printers are 203 dpi. That is 8 dots per millimetre, exactly. */
 const DOTS_PER_MM = 8
 
-/** How long to keep the print frame alive after handing off to the dialog. */
-const CLEANUP_DELAY_MS = 60_000
+/**
+ * Fallback teardown, if `afterprint` never fires. It is well supported, but a
+ * browser that skips it must not leak an iframe and a blob URL forever.
+ */
+const CLEANUP_FALLBACK_MS = 60_000
+
+/** Teardowns for print frames still on the page, so a caller can dispose them. */
+const liveFrames = new Set<() => void>()
+
+/**
+ * Tear down any print frame still open.
+ *
+ * A print frame lives on `document.body`, outside the Vue tree, so nothing
+ * unmounts it for us. Call this from `onScopeDispose` in whatever component
+ * triggered the print.
+ */
+export function cleanupPrintFrames(): void {
+  for (const dispose of [...liveFrames]) dispose()
+}
 
 /**
  * The physical width of a raster on paper, in millimetres.
@@ -62,20 +79,20 @@ export async function printRaster(png: Uint8Array, dotWidth: number): Promise<vo
   const frame = document.createElement('iframe')
   frame.setAttribute('aria-hidden', 'true')
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
-  document.body.appendChild(frame)
 
-  const cleanup = () => {
+  const dispose = () => {
+    if (!liveFrames.has(dispose)) return // already torn down
+    liveFrames.delete(dispose)
     URL.revokeObjectURL(url)
     frame.remove()
   }
+  liveFrames.add(dispose)
 
   try {
-    const win = frame.contentWindow
-    const docu = frame.contentDocument
-    if (!win || !docu) throw new Error('could not open a print frame')
-
-    docu.open()
-    docu.write(`<!doctype html>
+    // `srcdoc` rather than document.open/write/close: same result, without a
+    // legacy API, and the iframe's own `load` event then tells us when the
+    // image inside has decoded — print before that and you print a blank page.
+    frame.srcdoc = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
@@ -95,27 +112,28 @@ export async function printRaster(png: Uint8Array, dotWidth: number): Promise<vo
     </style>
   </head>
   <body><img src="${url}" alt=""></body>
-</html>`)
-    docu.close()
+</html>`
 
-    // Print before the image has decoded and you print a blank page.
-    const img = docu.querySelector('img')
-    if (img && !img.complete) {
-      await new Promise<void>((resolve) => {
-        img.addEventListener('load', () => resolve(), { once: true })
-        img.addEventListener('error', () => resolve(), { once: true })
+    await new Promise<void>((resolve, reject) => {
+      frame.addEventListener('load', () => resolve(), { once: true })
+      frame.addEventListener('error', () => reject(new Error('print frame failed to load')), {
+        once: true,
       })
-    }
+      document.body.appendChild(frame)
+    })
+
+    const win = frame.contentWindow
+    if (!win) throw new Error('could not open a print frame')
+
+    // The browser tells us when the dialog is done. Tearing the frame down any
+    // earlier cancels the job in Safari and Firefox.
+    win.addEventListener('afterprint', dispose, { once: true })
+    setTimeout(dispose, CLEANUP_FALLBACK_MS)
 
     win.focus()
     win.print()
   } catch (e) {
-    cleanup()
+    dispose()
     throw e
   }
-
-  // `print()` is synchronous in some browsers and not in others, and none of
-  // them tell us when the dialog closes. Tearing the frame down immediately
-  // cancels the job in Safari and Firefox, so leave it and sweep up later.
-  setTimeout(cleanup, CLEANUP_DELAY_MS)
 }

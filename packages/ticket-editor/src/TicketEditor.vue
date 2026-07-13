@@ -5,7 +5,7 @@
 // host's own drawers), the canvas has a zoom control, and placement is
 // non-destructive — a manual "Fit to width" is the only thing that ever moves
 // elements in bulk, and only when clicked.
-import { computed, ref, toRaw, watch } from 'vue'
+import { computed, onScopeDispose, ref, toRaw, watch } from 'vue'
 import VariableTree from './components/VariableTree.vue'
 import GridCanvas from './components/GridCanvas.vue'
 import ModifierPanel from './components/ModifierPanel.vue'
@@ -20,7 +20,7 @@ import {
   renderPng,
   unresolvedPaths,
 } from './composables/useRenderer'
-import { printRaster } from './lib/print'
+import { cleanupPrintFrames, printRaster } from './lib/print'
 import { PAPER_PRESETS, presetForDotWidth, STANDARD_DOT_WIDTHS } from './lib/paper'
 import { provideEditorI18n, type Messages } from './i18n'
 import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
@@ -723,6 +723,10 @@ async function print() {
     printing.value = false
   }
 }
+
+// The print frame lives on document.body, outside the Vue tree, so nothing
+// unmounts it for us — same reason PreviewPane revokes its blob URL here.
+onScopeDispose(cleanupPrintFrames)
 
 const saving = ref(false)
 async function save() {
