@@ -21,7 +21,28 @@
 //    this code, and `PrinterBusyError` exists to say exactly that instead of
 //    surfacing a generic failure that sends someone hunting in the wrong place.
 
-/** The OS (or another program) is holding the printer — see note 2 above. */
+/**
+ * The browser is not allowed to open the USB device node at all.
+ *
+ * Distinct from [`PrinterBusyError`], and they are easy to confuse because both
+ * end up as "it won't print". This one is *permissions*: on Linux the raw node
+ * under `/dev/bus/usb` is root-owned, and without a udev rule the browser cannot
+ * open it — `open()` throws "Access denied" before any interface is even
+ * considered. A udev rule fixes it; unbinding drivers does not.
+ */
+export class PermissionDeniedError extends Error {
+  constructor(cause?: unknown) {
+    super('the browser is not allowed to open this USB device')
+    this.name = 'PermissionDeniedError'
+    this.cause = cause
+  }
+}
+
+/**
+ * The device opened, but its interface is already claimed by a kernel driver —
+ * `usblp` on Linux, `usbprint.sys` on Windows. Permissions are fine; something
+ * else owns the printer. Detaching that driver fixes it; a udev rule does not.
+ */
 export class PrinterBusyError extends Error {
   constructor(cause?: unknown) {
     super('the operating system is holding this printer')
@@ -91,7 +112,16 @@ export async function connect(): Promise<Claimed> {
   if (!isSupported()) throw new Error('WebUSB is not available in this browser')
 
   const device = await navigator.usb.requestDevice({ filters: [] })
-  await device.open()
+
+  try {
+    await device.open()
+  } catch (e) {
+    // "Access denied" here is a permissions problem on the device node, not a
+    // driver claim — the two failures look identical to a user and have
+    // completely different fixes, so keep them apart.
+    throw new PermissionDeniedError(e)
+  }
+
   if (!device.configuration) await device.selectConfiguration(1)
 
   const { interfaceNumber, endpointNumber } = findBulkOut(device)

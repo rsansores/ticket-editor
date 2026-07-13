@@ -710,7 +710,8 @@ async function testPrint() {
     await webusb.printBytes(bytes)
     printMsg.value = t('printOk')
   } catch (e) {
-    if (e instanceof webusb.PrinterBusyError) printMsg.value = t('printBusy')
+    if (e instanceof webusb.PermissionDeniedError) printMsg.value = t('printDenied')
+    else if (e instanceof webusb.PrinterBusyError) printMsg.value = t('printBusy')
     else if (e instanceof webusb.NoBulkEndpointError) printMsg.value = t('printNoEndpoint')
     else if (e instanceof DOMException && e.name === 'NotFoundError') printMsg.value = ''
     else printMsg.value = e instanceof Error ? e.message : String(e)

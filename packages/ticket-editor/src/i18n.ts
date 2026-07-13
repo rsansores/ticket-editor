@@ -30,8 +30,10 @@ const en: MessageTable = {
   testPrint: '🖨 Test print',
   printing: 'Printing…',
   printUnsupported: 'Test print needs Chrome or Edge (WebUSB).',
+  printDenied:
+    'The browser is not allowed to open this USB device. On Linux you need a udev rule granting your user access to it (one-time setup); on Windows, switch the device to WinUSB with Zadig.',
   printBusy:
-    'Your operating system is holding this printer, so the browser cannot open it. On Linux, unbind usblp; on Windows, switch the device to WinUSB (Zadig). This is a one-time setup.',
+    'A driver on your computer is holding this printer, so the browser cannot claim it. On Linux, unbind usblp from the device; on Windows, switch it to WinUSB (Zadig). This is a one-time setup.',
   printNoEndpoint: 'This device has no bulk endpoint to print to — is it really a USB printer?',
   printOk: 'Sent to the printer.',
   railVariables: 'Variables',
@@ -233,8 +235,10 @@ const es: MessageTable = {
   testPrint: '🖨 Impresión de prueba',
   printing: 'Imprimiendo…',
   printUnsupported: 'La impresión de prueba necesita Chrome o Edge (WebUSB).',
+  printDenied:
+    'El navegador no tiene permiso para abrir este dispositivo USB. En Linux necesitas una regla udev que dé acceso a tu usuario (configuración de una sola vez); en Windows, cambia el dispositivo a WinUSB con Zadig.',
   printBusy:
-    'El sistema operativo tiene tomada la impresora y el navegador no puede abrirla. En Linux, desvincula usblp; en Windows, cambia el dispositivo a WinUSB (Zadig). Es una configuración de una sola vez.',
+    'Un controlador del sistema tiene tomada la impresora y el navegador no puede reclamarla. En Linux, desvincula usblp del dispositivo; en Windows, cámbialo a WinUSB (Zadig). Es una configuración de una sola vez.',
   printNoEndpoint:
     'Este dispositivo no tiene un endpoint bulk para imprimir. ¿Es realmente una impresora USB?',
   printOk: 'Enviado a la impresora.',
