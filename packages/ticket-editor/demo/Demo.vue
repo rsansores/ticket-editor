@@ -3,7 +3,7 @@
 // sample variable tree shaped like the spec's example and logs saves.
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { TicketEditor } from '../src'
+import { DEFAULT_PRESET, TicketEditor } from '../src'
 import type { TicketDoc, VariableType } from '../src'
 
 // Toggling the host locale flips the editor's language automatically.
@@ -46,15 +46,15 @@ const doc = ref<TicketDoc>({
     { name: 'sales_line', formula: 'concat(count(sale.movements), " payments in the cut")' },
   ],
   paper: {
-    // 48 cols x 12 px = 576 dots = 80 mm paper, the retail/POS standard. The old
-    // default (40 cols) came to 480 dots, which is no printer's width — so the
-    // editor opened already showing its own dot-width warning.
-    width_chars: 48,
+    // From the preset table, not a magic number: 80 mm paper, 576 dots. The old
+    // default (40 cols x 12 px = 480 dots) was no printer's width, so the editor
+    // opened already showing its own dot-width warning.
+    width_chars: DEFAULT_PRESET.cols,
+    cell_width_px: DEFAULT_PRESET.cellPx,
     margin_left_chars: 1,
     margin_right_chars: 1,
     margin_top_lines: 1,
     margin_bottom_lines: 1,
-    cell_width_px: 12,
     cell_height_px: 22,
     font_px: 20,
   },

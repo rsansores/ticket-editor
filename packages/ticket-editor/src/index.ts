@@ -17,6 +17,10 @@ export {
 } from './composables/useRenderer'
 export { deriveTree, guessLength, randomizeSample, inferType, pathTypeMap } from './lib/tree'
 export { footprint, overlappingIds } from './lib/layout'
+// Thermal paper formats. A host creating a new TicketDoc needs these to land the
+// grid on a real printer's dot width — see `lib/paper.ts` for why that matters.
+export { PAPER_PRESETS, DEFAULT_PRESET, STANDARD_DOT_WIDTHS, presetForDotWidth } from './lib/paper'
+export type { PaperPreset } from './lib/paper'
 export type { Footprint } from './lib/layout'
 export { builtinMessages } from './i18n'
 export type { Messages, Locale } from './i18n'
