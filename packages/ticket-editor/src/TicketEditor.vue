@@ -5,7 +5,7 @@
 // host's own drawers), the canvas has a zoom control, and placement is
 // non-destructive — a manual "Fit to width" is the only thing that ever moves
 // elements in bulk, and only when clicked.
-import { computed, ref, toRaw, watch } from 'vue'
+import { computed, onScopeDispose, ref, toRaw, watch } from 'vue'
 import VariableTree from './components/VariableTree.vue'
 import GridCanvas from './components/GridCanvas.vue'
 import ModifierPanel from './components/ModifierPanel.vue'
@@ -14,7 +14,14 @@ import PreviewPane from './components/PreviewPane.vue'
 import ComputedEditor from './components/ComputedEditor.vue'
 import TypeTag from './components/TypeTag.vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from './lib/tree'
-import { previewComputed, previewRowComputed, unresolvedPaths } from './composables/useRenderer'
+import {
+  previewComputed,
+  previewRowComputed,
+  renderPng,
+  unresolvedPaths,
+} from './composables/useRenderer'
+import { cleanupPrintFrames, printRaster } from './lib/print'
+import { PAPER_PRESETS, presetForDotWidth, STANDARD_DOT_WIDTHS } from './lib/paper'
 import { provideEditorI18n, type Messages } from './i18n'
 import { RESERVED_ROW_NAMES, SCHEMA_VERSION } from './types'
 import type {
@@ -670,11 +677,24 @@ function removeRegion(id: string) {
 }
 
 // Raster width in printer dots. Thermal heads have a fixed native dot width
-// (203 dpi: 384 = 58 mm, 576 = 80 mm); anything else gets scaled by the driver
-// and prints fuzzy. Worth far more than a contrast slider — warn on mismatch.
-const STANDARD_DOT_WIDTHS = [384, 576]
+// (203 dpi: 384 = 58 mm paper, 576 = 80 mm); anything else gets scaled by the
+// driver and prints fuzzy. Worth far more than a contrast slider.
 const dotWidth = computed(() => doc.value.paper.width_chars * (doc.value.paper.cell_width_px ?? 12))
 const dotWidthOk = computed(() => STANDARD_DOT_WIDTHS.includes(dotWidth.value))
+
+// Pick the paper, get the columns — not the other way round. Landing the grid on
+// the printer's dot width is a constraint the user cannot be expected to solve in
+// their head, and getting it wrong is invisible until the paper comes out narrow.
+// Columns stay editable: a denser font (a smaller cell) is a legitimate thing to
+// want, and 'custom' covers the rare printer neither preset fits.
+const paperId = computed(() => presetForDotWidth(dotWidth.value)?.id ?? 'custom')
+
+function selectPaper(id: string) {
+  const preset = PAPER_PRESETS.find((p) => p.id === id)
+  if (!preset) return // 'custom' — leave the document alone, the user drives.
+  doc.value.paper.width_chars = preset.cols
+  doc.value.paper.cell_width_px = preset.cellPx
+}
 
 // Printable content width in characters — used by a field's per-element
 // "Fit to width" action in the modifier panel.
@@ -682,6 +702,31 @@ const contentCols = computed(() => {
   const p = doc.value.paper
   return Math.max(1, p.width_chars - (p.margin_left_chars ?? 0) - (p.margin_right_chars ?? 0))
 })
+
+// Print through the OS print dialog. The printer is whatever the operating
+// system already knows about — installing a POS printer is the OS's job, and
+// deliberately not ours. Renders in PRINT mode (placeholders off): a ticket you
+// hold in your hand must show what the customer would get, never a plausible
+// fake value in place of a missing one.
+const printing = ref(false)
+const printError = ref('')
+
+async function print() {
+  printing.value = true
+  printError.value = ''
+  try {
+    const png = await renderPng(snapshot(doc.value), props.variables, false)
+    await printRaster(png, dotWidth.value)
+  } catch (e) {
+    printError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    printing.value = false
+  }
+}
+
+// The print frame lives on document.body, outside the Vue tree, so nothing
+// unmounts it for us — same reason PreviewPane revokes its blob URL here.
+onScopeDispose(cleanupPrintFrames)
 
 const saving = ref(false)
 async function save() {
@@ -699,6 +744,20 @@ async function save() {
   <div class="te-root te-editor">
     <header class="te-toolbar">
       <strong class="te-title">{{ t('title') }}</strong>
+      <label class="te-inline"
+        >{{ t('paper') }}
+        <select
+          class="te-num"
+          :value="paperId"
+          :title="t('paperTip')"
+          @change="selectPaper(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="p in PAPER_PRESETS" :key="p.id" :value="p.id">
+            {{ t('paperOption', { mm: p.paperMm, dots: p.dots }) }}
+          </option>
+          <option value="custom">{{ t('paperCustom') }}</option>
+        </select>
+      </label>
       <label class="te-inline"
         >{{ t('width') }}
         <input
@@ -736,6 +795,18 @@ async function save() {
         {{ t('dotWidthWarn', { px: dotWidth }) }}
       </span>
       <div class="te-spacer" />
+      <span v-if="printError" class="te-chip te-chip-warn" :title="printError">{{
+        printError
+      }}</span>
+      <button
+        class="te-btn te-btn-ghost"
+        type="button"
+        :disabled="printing"
+        :title="t('printHint')"
+        @click="print"
+      >
+        {{ printing ? t('printing') : t('print') }}
+      </button>
       <button
         v-if="onSave"
         class="te-btn te-btn-primary"
