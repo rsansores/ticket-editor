@@ -19,6 +19,12 @@
 // Dots are at 203 dpi (8 dots/mm), which is what essentially every ESC/POS
 // receipt printer is. See `print.ts`.
 
+/**
+ * Thermal printers are 203 dpi — exactly 8 dots per millimetre. This is what
+ * ties a raster to physical paper: a 576-dot-wide ticket is 72 mm across.
+ */
+export const DOTS_PER_MM = 8
+
 export interface PaperPreset {
   /** Stable id, also the `<select>` value. */
   id: string
