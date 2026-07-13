@@ -32,6 +32,15 @@ bundled-fonts = []
 # only renders (the wasm preview, an edge device) has no use for. PNG sources go
 # through this crate's own decoder either way.
 normalize = ["dep:image"]
+# `render_escpos()` / `png_to_escpos()`: emit the ESC/POS byte stream a thermal
+# printer actually accepts, instead of stopping at a PNG nobody can print. Adds
+# no dependencies — it is `png` (already required) plus std. Off by default only
+# because a build that just draws the preview has no printer to talk to.
+escpos = []
+
+[[example]]
+name = "print"
+required-features = ["escpos"]
 
 [dev-dependencies]
 png = { workspace = true }

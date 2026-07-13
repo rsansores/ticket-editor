@@ -34,6 +34,8 @@
 
 mod barcode;
 mod data;
+#[cfg(feature = "escpos")]
+mod escpos;
 mod expr;
 mod font;
 mod format;
@@ -44,6 +46,8 @@ mod qr;
 mod render;
 mod schema;
 
+#[cfg(feature = "escpos")]
+pub use escpos::{png_to_escpos, render_escpos, CutMode, EscPosError, MarkerAt, PrinterProfile};
 pub use font::{FontFaces, Fonts, DEFAULT_FAMILY};
 #[cfg(feature = "normalize")]
 pub use normalize::{normalize_images, Error as NormalizeError, Stats as NormalizeStats};

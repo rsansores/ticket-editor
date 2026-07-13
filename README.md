@@ -42,12 +42,15 @@ codebases kept in sync by hand.
 
 | Package | What it is | Registry |
 |---------|-----------|----------|
-| **`ticket-core`** | The Rust renderer + the canonical document schema. Deterministic: same document + data → same PNG bytes. | crates.io |
+| **`ticket-core`** | The renderer + the canonical document schema. Deterministic: same document + data → same PNG bytes. Optional features take it the rest of the way to the printer — see [below](#the-rest-of-the-pipeline). | crates.io |
+| **`ticket-printable`** | `#[derive(Printable)]` on your own model structs → the variables JSON, and a matching sample tree for the editor. | crates.io |
+| **`ticket-printable-derive`** | The proc-macro behind it. You depend on `ticket-printable`, not this. | crates.io |
 | **`@ticket-editor/vue`** | The embeddable Vue 3 editor. Bundles the wasm renderer, so consumers need no Rust toolchain. | npm |
 
 The Vue package embeds a WebAssembly build of `ticket-core` for its preview, so
 the editor's preview and your backend's print output come from the exact same
-renderer.
+renderer. All four ship at the **same version**, always — a renderer skew between
+the preview and the print is precisely the bug this project exists to prevent.
 
 ## The document format
 
@@ -149,7 +152,7 @@ bundled twice).
 
 ```toml
 # Cargo.toml
-ticket-core = "0.1"
+ticket-core = "0.3"
 ```
 
 ```rust
@@ -158,8 +161,12 @@ use ticket_core::{render_png, TicketDoc};
 // `doc` is the JSON you stored; `data` is the real sale as a serde_json::Value.
 let doc: TicketDoc = serde_json::from_str(stored_json)?;
 let png: Vec<u8> = render_png(&doc, &data)?;   // same renderer as the browser preview
-// send `png` to your printer (CUPS, ESC/POS raster, …)
 ```
+
+That PNG is the deliverable if you print through CUPS or show the ticket on a
+screen. If you are talking to a thermal printer directly, don't stop here — the
+[`escpos`](#printing-it-the-escpos-feature) feature emits the bytes it actually
+accepts.
 
 One deliberate asymmetry: `render_png` runs in **print mode** — a variable path
 that doesn't resolve in `data` renders *empty*, so a typo or a null field can
@@ -191,36 +198,13 @@ no panics on hostile input).
 - **Text wrap** (word-aware) within a fixed column band.
 - **Logos** (PNG, reduced to 1-bit by threshold or Floyd–Steinberg dithering) and
   **QR codes** (from a literal or a variable).
+- **Straight to the printer** (`escpos` feature): ESC/POS bytes, not just a PNG —
+  with a printer profile that keeps a `cut` marker from bricking a cutter-less
+  device. See [below](#printing-it-the-escpos-feature).
 - **Loops** over repeatable arrays and **conditionals**, with content reflow —
   authored via a git-style lane and configured in the side drawer.
 - Non-destructive editing: free placement, insert/remove rows, overflow zone,
   overlap flags, "fit to width".
-- **Shrink a document for transport** (`ticket-core`, `normalize` feature): bake
-  every embedded image down to the 1-bit PNG the printer was going to get anyway.
-  Renders identically, typically an order of magnitude smaller — see below.
-
-### Shipping a document to a device
-
-A logo pasted into the editor is an 8-bit RGBA PNG: ~24 bits per pixel, of which
-a monochrome printer keeps one. That is free if the document renders where it
-lives, and expensive if it has to cross a metered link, a serial bus or a
-phone-relayed BLE tunnel on every save.
-
-`ticket_core::normalize_images` (behind the `normalize` cargo feature) does the
-renderer's image work up front — decode, scale to the target box, threshold or
-dither — and writes each result back as a 1-bit PNG. The renderer's own pass then
-degenerates to a no-op, so the ticket comes out pixel-for-pixel the same:
-
-```rust
-let mut doc: TicketDoc = serde_json::from_str(&json)?;
-let stats = ticket_core::normalize_images(&mut doc)?;   // e.g. 102 kB -> 13 kB
-send_to_device(&serde_json::to_string(&doc)?);
-```
-
-It also accepts the formats the renderer cannot (JPEG, WebP) and canonicalizes
-them to PNG — so a WebP logo, which `render` draws as a placeholder frame, prints
-properly once normalized. Keep your original document if you want to re-tune a
-threshold later; normalize on the way out.
 
 Loops and conditionals are marked in a git-style lane next to the rows and
 configured in the drawer — no template language to learn:
@@ -231,6 +215,7 @@ configured in the drawer — no template language to learn:
 
 ```
 crates/ticket-core            # the renderer + schema (native + wasm), the crates.io package
+                              #   features: normalize (shrink for transport), escpos (print), bundled-fonts
 crates/ticket-wasm            # wasm-bindgen wrapper (build tool; produces the browser bundle)
 crates/ticket-printable       # derive an annotated model into the variables JSON (DB/framework-agnostic)
 crates/ticket-printable-derive# the #[derive(Printable)] proc-macro
@@ -238,13 +223,114 @@ packages/ticket-editor        # the Vue editor (@ticket-editor/vue), embeds the 
 scripts/build-wasm.sh         # rebuild the browser wasm bundle from ticket-core
 ```
 
-## Feeding the variable tree from your models — `ticket-printable`
+## The rest of the pipeline
 
-Instead of hand-writing the `variables` object (and a matching sample that
-drifts), annotate your existing model structs and derive `Printable`. One
-definition yields both the editor's sample tree and the real render data, so
-they can't diverge. See [`crates/ticket-printable`](crates/ticket-printable) —
-it's DB- and framework-agnostic (annotate a struct, get JSON).
+The renderer is the middle of the story, not the whole of it. A ticket has to be
+*fed* data, and it has to *get* somewhere — and both of those turn out to have a
+sharp edge that isn't obvious until it cuts you. Each is a separate crate or an
+off-by-default feature, so you only pay for the ones you use.
+
+```
+   your models                                      a thermal printer
+        │                                                   ▲
+        │ ticket-printable          ticket-core             │ escpos
+        │ (derive)                  (the renderer)          │ (feature)
+        ▼                                                   │
+   variables JSON ──────────► TicketDoc ──► PNG ────────────┘
+                                  │
+                                  │ normalize (feature)
+                                  ▼
+                          a document small enough to ship
+```
+
+### Feeding it: `ticket-printable`
+
+The renderer wants a `variables` JSON tree. You could hand-write it — and then
+hand-write a *second*, fake one so the editor has something to preview against.
+Now you have two hand-written trees that must agree with each other and with your
+real model, forever, and nothing enforces it. They drift. When they drift, the
+editor happily lets someone design against a field that the print path does not
+supply, and the failure is silent: a blank space on a customer's receipt, found
+weeks later.
+
+`#[derive(Printable)]` on your existing structs removes the second and third
+copies. One annotated definition yields both the real render data and the sample
+tree the editor previews with, so they cannot disagree. It is DB- and
+framework-agnostic: annotate a struct, get JSON. See
+[`crates/ticket-printable`](crates/ticket-printable).
+
+### Shipping it: the `normalize` feature
+
+A logo pasted into the editor is an 8-bit RGBA PNG — roughly 24 bits per pixel,
+of which a monochrome printer keeps exactly one. That waste is free if the
+document renders on the machine it is stored on. It is not free if the document
+has to travel to the device on every save, over a link you don't control.
+
+`normalize_images` does the renderer's image work up front — decode, scale to the
+target box, threshold or dither — and writes each result back as a 1-bit PNG. The
+renderer's own pass then degenerates to a no-op (the scale is identity, and
+thresholding an already-binary image is idempotent), so the ticket renders
+**pixel-for-pixel the same** from a far smaller document. A real 48-char receipt
+went from 102 kB to 13 kB; the images in it, 95 kB to 3.3 kB.
+
+```rust
+let mut doc: TicketDoc = serde_json::from_str(&json)?;
+let stats = ticket_core::normalize_images(&mut doc)?;   // 102 kB -> 13 kB
+send_to_device(&serde_json::to_string(&doc)?);
+```
+
+Compression is not a substitute, incidentally, and it's worth knowing why before
+you reach for it: the payload is base64 of *already-deflated* PNG, so gzip on the
+original document buys about 1.4× and leaves you at 73 kB. Normalizing is what
+makes the document compressible again — what's left is repetitive JSON.
+
+It also accepts the formats the renderer cannot (JPEG, WebP) and canonicalizes
+them to PNG. `render` reads PNG only and draws a placeholder frame for anything
+else, so a WebP logo prints as an empty box; normalize it and the logo appears.
+
+Keep your original document if you want to re-tune a threshold later — baking is
+one-way. Normalize on the way out.
+
+Off by default: it pulls in `image` for the JPEG/WebP decoding, which a build
+that only draws the preview has no use for.
+
+### Printing it: the `escpos` feature
+
+A renderer that stops at a PNG is half a library. No thermal printer takes a PNG;
+it wants a 1-bit raster fed with `GS v 0`, wrapped in control codes. Every user
+would otherwise write that same conversion, and the interesting part is not the
+raster — it's the part that bites.
+
+```rust
+use ticket_core::{render_escpos, CutMode, Fonts, PrinterProfile, RenderOptions};
+
+let profile = PrinterProfile { cut: CutMode::Partial };  // only if it really has a cutter
+let bytes = render_escpos(&doc, &data, &fonts, &RenderOptions::default(), &profile)?;
+std::fs::OpenOptions::new().write(true).open("/dev/usb/lp0")?.write_all(&bytes)?;
+```
+
+A USB thermal printer is a character device; raw bytes are the entire transport.
+There is no driver to install. See [`examples/print.rs`](crates/ticket-core/examples/print.rs).
+
+**Markers are intent; the profile decides.** A document's `cut` marker means "the
+ticket ends here" — not "cut now". Whether it becomes bytes depends on the printer
+in front of you, and this is the one place in the crate where being wrong has
+physical consequences:
+
+> A cut sent to a printer whose cutter is absent or disabled is **not** a no-op.
+> It is silently ignored *and latches an error that stops the printer until it is
+> power-cycled* — so every subsequent ticket is lost, and nobody notices until
+> someone asks where the receipts went. The printer answers no status query, so
+> this cannot be probed. It has to be configured.
+
+Hence `CutMode::None` is the default and a document asking to cut is never enough
+on its own. The reverse is deliberately harmless: an intent this printer cannot
+honor (a cash drawer it doesn't have) is dropped, never an error — a ticket
+authored for a fancier device must still print here.
+
+Off by default, but it adds **no dependencies** — it's `png` (already required)
+plus std. It's opt-in only because a build that just draws the preview has no
+printer to talk to.
 
 ## Calculated variables (e.g. a maps QR, per-payment totals)
 
@@ -285,9 +371,14 @@ cleaned of floating-point noise.
 ```bash
 # Renderer (native): tests + a sample PNG
 cargo test -p ticket-core
+cargo test -p ticket-core --all-features        # incl. normalize + escpos
 cargo run -p ticket-core --example sample -- /tmp/sample.png   # basic receipt
 cargo run -p ticket-core --example flow   -- /tmp/flow.png     # loop + condition
 cargo run -p ticket-core --example media  -- /tmp/media.png    # logo + QR
+
+# Printing: render straight to ESC/POS bytes (no printer needed — writes a file)
+cargo run -p ticket-core --features escpos --example print -- /tmp/ticket.bin
+cargo run -p ticket-core --features escpos --example print -- /dev/usb/lp0
 
 # Renderer (wasm): the browser bundle is a GENERATED artifact, not committed to
 # git — build it once before running the editor, and again after changing ticket-core:
