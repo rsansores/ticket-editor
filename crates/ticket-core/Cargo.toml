@@ -17,7 +17,7 @@ ab_glyph = { workspace = true }
 png = { workspace = true }
 qrcodegen = { workspace = true }
 barcoders = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 image = { workspace = true, optional = true }
 
 [features]
@@ -44,7 +44,7 @@ required-features = ["escpos"]
 
 [dev-dependencies]
 png = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 # Only to build the JPEG/WebP fixtures the `normalize` tests feed in. The crate
 # itself never encodes with it.
 image = { workspace = true }
