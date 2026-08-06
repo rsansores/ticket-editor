@@ -33,7 +33,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # --- Build the wasm renderer from Rust source ---------------------------
       # The browser preview must run the exact same code as the native backend.
@@ -59,10 +59,10 @@ jobs:
 
       # --- Build the demo SPA from that fresh wasm ----------------------------
       # From the editor's `packageManager` pin, not a floating major — see ci.yml.
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           package_json_file: packages/ticket-editor/package.json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
