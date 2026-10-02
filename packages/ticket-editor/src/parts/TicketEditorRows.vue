@@ -198,6 +198,22 @@ function onKey(e: KeyboardEvent, r: number) {
   e.preventDefault()
 }
 
+// Chrome drops the click of a tap that comes too soon (~0.6 s) after a swipe —
+// exactly the "swipe, tap Delete" rhythm. So tray buttons act on the pointer
+// itself (press and release on the same button); click still serves keyboards,
+// whose synthetic clicks carry detail 0.
+let pressedTray: EventTarget | null = null
+function trayDown(e: PointerEvent) {
+  pressedTray = e.currentTarget
+}
+function trayUp(e: PointerEvent, run: () => void) {
+  if (pressedTray === e.currentTarget) run()
+  pressedTray = null
+}
+function trayClick(e: MouseEvent, run: () => void) {
+  if (e.detail === 0) run()
+}
+
 function addObject(r: number) {
   open.value = null
   addTarget.value = r
@@ -247,7 +263,13 @@ function deleteLine(r: number) {
         </button>
         <div class="te-rows-swipe" :class="{ 'in-band': !!bandOf(r), loop: !!bandOf(r)?.source }">
           <div class="te-rows-tray delete" :inert="open?.row !== r || open.side !== 'delete'">
-            <button class="te-rows-act" type="button" @click="deleteLine(r)">
+            <button
+              class="te-rows-act"
+              type="button"
+              @pointerdown="trayDown"
+              @pointerup="trayUp($event, () => deleteLine(r))"
+              @click="trayClick($event, () => deleteLine(r))"
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
               </svg>
@@ -255,20 +277,39 @@ function deleteLine(r: number) {
             </button>
           </div>
           <div class="te-rows-tray actions" :inert="open?.row !== r || open.side !== 'actions'">
-            <button class="te-rows-act" type="button" @click="addObject(r)">
+            <button
+              class="te-rows-act"
+              type="button"
+              @pointerdown="trayDown"
+              @pointerup="trayUp($event, () => addObject(r))"
+              @click="trayClick($event, () => addObject(r))"
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="4" y="4" width="16" height="16" rx="3" />
                 <path d="M12 8v8M8 12h8" />
               </svg>
               {{ t('rowAddObject') }}
             </button>
-            <button class="te-rows-act" type="button" @click="addLineBelow(r)">
+            <button
+              class="te-rows-act"
+              type="button"
+              @pointerdown="trayDown"
+              @pointerup="trayUp($event, () => addLineBelow(r))"
+              @click="trayClick($event, () => addLineBelow(r))"
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M4 6h16M4 11h16M4 16h8M18 14v6M15 17h6" />
               </svg>
               {{ t('rowAddLine') }}
             </button>
-            <button v-if="!bandOf(r)" class="te-rows-act" type="button" @click="makeBand(r)">
+            <button
+              v-if="!bandOf(r)"
+              class="te-rows-act"
+              type="button"
+              @pointerdown="trayDown"
+              @pointerup="trayUp($event, () => makeBand(r))"
+              @click="trayClick($event, () => makeBand(r))"
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M20 12a8 8 0 1 1-2.34-5.66" />
                 <path d="M20 4v4h-4" />
