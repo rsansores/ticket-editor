@@ -512,7 +512,8 @@ function deleteLine(r: number) {
 }
 /* an empty line: the canvas's overflow stripes, no words */
 .te-rows-line.empty {
-  min-height: 1.6rem;
+  /* shorter than a filled line, but tall enough for the swipe slabs' icon and label */
+  min-height: 2.6rem;
   background:
     repeating-linear-gradient(45deg, transparent 0 6px, rgba(0, 0, 0, 0.035) 6px 12px),
     var(--te-muted);
