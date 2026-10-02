@@ -2,10 +2,20 @@
 // The ticket as a list of lines — the phone's editor. A receipt is mostly
 // one-dimensional (lines, with a few things side by side), so on a narrow
 // screen it edits as a list instead of a 2D grid: tap an element to edit it
-// (row, column and alignment live in its properties), and each line has its
-// own actions. Same document and actions as the canvas.
+// (row, column and alignment live in its properties), "+" adds to that line,
+// and each line has its own actions. Same document and actions as the canvas.
+//
+// A list can't show two elements colliding the way the canvas does, so chips
+// carry the canvas's warnings instead: overlapping another element, or running
+// past the paper edge. Nothing here moves an element on its own.
 import { computed, ref } from 'vue'
-import { contentRows, elementFootprint, type Footprint } from '../lib/layout'
+import {
+  contentRows,
+  elementFootprint,
+  overlappingIds,
+  printableCols,
+  type Footprint,
+} from '../lib/layout'
 import { bandDescription, leaf } from '../lib/bands'
 import { useTicketEditorContext } from '../core/useTicketEditor'
 import type { Element, Region } from '../types'
@@ -22,6 +32,7 @@ const {
   insertRow,
   deleteRow,
   createRegion,
+  addTarget,
 } = useTicketEditorContext()
 
 const fps = computed(() => {
@@ -32,6 +43,22 @@ const fps = computed(() => {
 })
 const fp = (el: Element) => fps.value.get(el.id) ?? elementFootprint(el, doc.value.paper)
 const rowCount = computed(() => contentRows(doc.value, fp))
+
+const overlapping = computed(() =>
+  overlappingIds(
+    doc.value.elements.filter((e) => e.type !== 'marker'),
+    printableCols(doc.value.paper),
+    fp,
+  ),
+)
+function offPaper(el: Element): boolean {
+  return el.type !== 'marker' && el.col + fp(el).cols > printableCols(doc.value.paper)
+}
+function chipWarning(el: Element): string | undefined {
+  if (overlapping.value.has(el.id)) return t('chipOverlap')
+  if (offPaper(el)) return t('chipOffPaper')
+  return undefined
+}
 
 // Elements by the row they start on, left to right.
 const byRow = computed(() => {
@@ -136,14 +163,27 @@ function makeBand(r: number) {
             v-for="el in byRow.get(r) ?? []"
             :key="el.id"
             class="te-rows-chip"
-            :class="[el.type, { selected: el.id === selectedId, bold: el.style?.bold }]"
+            :class="[
+              el.type,
+              { selected: el.id === selectedId, bold: el.style?.bold, warn: !!chipWarning(el) },
+            ]"
             type="button"
+            :title="chipWarning(el)"
             @click="selectElement(el.id)"
           >
-            {{ chipText(el) }}
+            <span v-if="chipWarning(el)" aria-hidden="true">⚠ </span>{{ chipText(el) }}
           </button>
           <span v-if="isEmpty(r)" class="te-rows-blank">{{ t('rowBlank') }}</span>
         </div>
+        <button
+          class="te-rows-add"
+          type="button"
+          :aria-label="t('addToLine', { n: r })"
+          :title="t('addToLine', { n: r })"
+          @click="addTarget = r"
+        >
+          +
+        </button>
         <button
           class="te-rows-more"
           type="button"
@@ -207,7 +247,7 @@ function makeBand(r: number) {
 }
 .te-rows-line {
   display: grid;
-  grid-template-columns: 1.6rem minmax(0, 1fr) 2.4rem;
+  grid-template-columns: 1.6rem minmax(0, 1fr) 2.4rem 2.4rem;
   align-items: center;
   gap: 0.4rem;
   min-height: 2.75rem;
@@ -277,6 +317,22 @@ function makeBand(r: number) {
   font-size: 0.75rem;
   color: var(--te-muted-fg);
   font-style: italic;
+}
+.te-rows-chip.warn {
+  border-color: #d97706;
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  color: #b45309;
+}
+.te-rows-add {
+  width: 2.4rem;
+  height: 2.2rem;
+  border: 0;
+  border-radius: calc(var(--te-radius) - 2px);
+  background: color-mix(in srgb, var(--te-primary) 8%, transparent);
+  color: var(--te-primary);
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 .te-rows-more {
   width: 2.4rem;

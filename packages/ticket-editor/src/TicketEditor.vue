@@ -46,7 +46,20 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [doc: TicketDoc] }>()
 
-const { t, selected, selectedBand, selectElement, selectBand, onSelect } = useTicketEditor({
+const {
+  t,
+  selected,
+  selectedBand,
+  selectElement,
+  selectBand,
+  onSelect,
+  addTarget,
+  addText,
+  addImage,
+  addQr,
+  addBarcode,
+  addMarker,
+} = useTicketEditor({
   modelValue: () => props.modelValue,
   variables: () => props.variables,
   variableTypes: () => props.variableTypes,
@@ -79,7 +92,7 @@ onBeforeUnmount(() => ro?.disconnect())
 const leftOpen = ref(true)
 const rightOpen = ref(true)
 // Phone: which bottom sheet is up, and which half of the screen shows.
-const sheet = ref<'vars' | 'inspect' | null>(null)
+const sheet = ref<'add' | 'inspect' | null>(null)
 const tab = ref<'edit' | 'preview'>('edit')
 
 // Rails are columns when wide and drawers over the canvas otherwise, so they
@@ -87,7 +100,46 @@ const tab = ref<'edit' | 'preview'>('edit')
 watch(tier, (next) => {
   leftOpen.value = rightOpen.value = next === 'wide'
   sheet.value = null
+  addTarget.value = null
 })
+// Phone: a line's "+" sets the add target; the picker opens for it. Picking
+// something consumes the target and selects the new element, which swaps this
+// sheet for its properties.
+watch(addTarget, (row) => {
+  if (row !== null && tier.value === 'narrow') sheet.value = 'add'
+})
+const addTypes = [
+  { key: 'addMenuText', icon: 'T', run: addText },
+  { key: 'addMenuImage', icon: '▣', run: addImage },
+  { key: 'addMenuQr', icon: '▦', run: addQr },
+  { key: 'addMenuBarcode', icon: '▥', run: addBarcode },
+  { key: 'addMenuMarker', icon: '✂', run: addMarker },
+]
+function closeAdd() {
+  sheet.value = null
+  addTarget.value = null
+}
+
+// Tablet drawers sit over the canvas, so a press anywhere else closes them —
+// except inside a dialog or menu they opened. Pressing an element still opens
+// the properties drawer: the selection reopens it in the same tick.
+const leftRail = ref<HTMLElement | null>(null)
+const rightRail = ref<HTMLElement | null>(null)
+function onOutsidePress(e: PointerEvent) {
+  const target = e.target as Element | null
+  if (!target || target.closest('.te-modal-backdrop, .te-menu')) return
+  if (!leftRail.value?.contains(target)) leftOpen.value = false
+  if (!rightRail.value?.contains(target)) rightOpen.value = false
+}
+watch(
+  () => tier.value === 'medium' && (leftOpen.value || rightOpen.value),
+  (listen) => {
+    if (listen) document.addEventListener('pointerdown', onOutsidePress, true)
+    else document.removeEventListener('pointerdown', onOutsidePress, true)
+  },
+)
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePress, true))
+
 // Selecting anything brings its properties into view.
 onSelect(() => {
   if (tier.value === 'narrow') sheet.value = 'inspect'
@@ -137,9 +189,6 @@ function closeInspector() {
           </button>
         </div>
         <div class="te-narrow-actions">
-          <button class="te-narrow-btn" type="button" @click="sheet = 'vars'">
-            {{ t('railVariables') }}
-          </button>
           <button class="te-narrow-btn" type="button" @click="openTicket">
             {{ t('railTicket') }}
           </button>
@@ -150,7 +199,23 @@ function closeInspector() {
         <TicketEditorPreview v-else />
       </div>
 
-      <BottomSheet v-if="sheet === 'vars'" @close="sheet = null">
+      <BottomSheet
+        v-if="sheet === 'add' && addTarget !== null"
+        :title="t('addToLine', { n: addTarget })"
+        @close="closeAdd"
+      >
+        <div class="te-add-types">
+          <button
+            v-for="it in addTypes"
+            :key="it.key"
+            class="te-add-type"
+            type="button"
+            @click="it.run()"
+          >
+            <span class="te-add-ico" aria-hidden="true">{{ it.icon }}</span>
+            {{ t(it.key) }}
+          </button>
+        </div>
         <TicketEditorVariables />
       </BottomSheet>
       <BottomSheet v-if="sheet === 'inspect'" :title="inspectorTitle" @close="closeInspector">
@@ -159,7 +224,7 @@ function closeInspector() {
     </div>
 
     <div v-else class="te-body">
-      <aside class="te-rail" :class="{ collapsed: !leftOpen }">
+      <aside ref="leftRail" class="te-rail" :class="{ collapsed: !leftOpen }">
         <button
           class="te-rail-toggle"
           type="button"
@@ -183,7 +248,7 @@ function closeInspector() {
         <TicketEditorPreview />
       </section>
 
-      <aside class="te-rail te-rail-right" :class="{ collapsed: !rightOpen }">
+      <aside ref="rightRail" class="te-rail te-rail-right" :class="{ collapsed: !rightOpen }">
         <button
           class="te-rail-toggle right"
           type="button"
@@ -342,6 +407,31 @@ function closeInspector() {
   font: inherit;
   font-size: 0.82rem;
   cursor: pointer;
+}
+.te-add-types {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.te-add-type {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.6rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--te-input);
+  border-radius: var(--te-radius);
+  background: var(--te-card);
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.te-add-ico {
+  width: 1rem;
+  text-align: center;
+  color: var(--te-muted-fg);
 }
 .te-narrow-main {
   flex: 1;

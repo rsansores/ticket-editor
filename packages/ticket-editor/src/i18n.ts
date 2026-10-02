@@ -50,6 +50,9 @@ const en: MessageTable = {
   rowRemoveBlocked: 'Only an empty line can be removed',
   rowMakeBand: 'Loop / condition',
   rowsAppend: '+ Add line',
+  addToLine: 'Add to line {n}',
+  chipOverlap: 'Overlaps another element on the ticket',
+  chipOffPaper: 'Runs past the paper edge',
   ticketHint:
     'Select an element on the canvas to edit it. These settings apply to the whole ticket.',
   fitToWidth: 'Fit to width',
@@ -283,6 +286,9 @@ const es: MessageTable = {
   rowRemoveBlocked: 'Solo se puede quitar una línea vacía',
   rowMakeBand: 'Ciclo / condición',
   rowsAppend: '+ Agregar línea',
+  addToLine: 'Agregar a la línea {n}',
+  chipOverlap: 'Se encima con otro elemento del ticket',
+  chipOffPaper: 'Se sale del borde del papel',
   ticketHint:
     'Selecciona un elemento en el lienzo para editarlo. Estos ajustes aplican a todo el ticket.',
   fitToWidth: 'Ajustar al ancho',
