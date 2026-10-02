@@ -1,7 +1,22 @@
 // Public API of @ticket-editor/vue.
 export { default as TicketEditor } from './TicketEditor.vue'
-// Sub-components, exported so a host can compose its own layout (e.g. drop the
-// modifier panel into its own drawer).
+// Headless core + connected parts: a host with its own design system calls
+// `useTicketEditor()` in its own layout component and places these parts in its
+// own rails, drawers and sheets. `TicketEditor` above is one such layout.
+export { useTicketEditor, useTicketEditorContext } from './core/useTicketEditor'
+export type {
+  TicketEditorOptions,
+  TicketEditorContext,
+  EditorSelection,
+} from './core/useTicketEditor'
+export { default as TicketEditorToolbar } from './parts/TicketEditorToolbar.vue'
+export { default as TicketEditorVariables } from './parts/TicketEditorVariables.vue'
+export { default as TicketEditorCanvas } from './parts/TicketEditorCanvas.vue'
+export { default as TicketEditorPreview } from './parts/TicketEditorPreview.vue'
+export { default as TicketEditorInspector } from './parts/TicketEditorInspector.vue'
+export { default as TicketEditorDialogs } from './parts/TicketEditorDialogs.vue'
+// Presentational sub-components (props in, events out), for a host that wants
+// to wire them itself.
 export { default as ModifierPanel } from './components/ModifierPanel.vue'
 export { default as PreviewPane } from './components/PreviewPane.vue'
 export { default as VariableTree } from './components/VariableTree.vue'

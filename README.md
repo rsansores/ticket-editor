@@ -141,6 +141,64 @@ Embedded in an app that defines those tokens, it inherits the host look
 automatically; standalone it uses the defaults. It has **no dependency on any
 host UI kit**.
 
+### Your own layout
+
+`<TicketEditor>` is one layout over a headless core. When your app has its own
+design system, with its own drawers, sheets and toolbar, build the layout yourself.
+Call `useTicketEditor()` in your component and place the connected parts
+wherever they belong:
+
+```vue
+<script setup lang="ts">
+import {
+  useTicketEditor,
+  TicketEditorCanvas,
+  TicketEditorPreview,
+  TicketEditorVariables,
+  TicketEditorInspector,
+  TicketEditorDialogs,
+} from '@ticket-editor/vue'
+
+const doc = defineModel<TicketDoc>({ required: true })
+const editor = useTicketEditor({
+  modelValue: doc,
+  variables: () => sale,
+  onUpdate: (d) => (doc.value = d),
+})
+const inspectorOpen = ref(false)
+editor.onSelect(() => (inspectorOpen.value = true))
+</script>
+
+<template>
+  <MyToolbar>
+    <MyButton @click="editor.addText">Add text</MyButton>
+    <MyButton @click="editor.print">Print</MyButton>
+  </MyToolbar>
+  <TicketEditorCanvas />
+  <TicketEditorPreview />
+  <TicketEditorDialogs />
+  <MySheet side="left"><TicketEditorVariables /></MySheet>
+  <MySheet side="right" v-model:open="inspectorOpen"><TicketEditorInspector /></MySheet>
+</template>
+```
+
+| Part | What it is |
+|------|------------|
+| `TicketEditorToolbar` | The built-in toolbar (paper, zoom, add, print, save). Skip it to use your own buttons. |
+| `TicketEditorVariables` | Variable tree and calculated values. Clicking one places it. |
+| `TicketEditorCanvas` | The structural grid editor. |
+| `TicketEditorPreview` | The 1:1 wasm preview. |
+| `TicketEditorInspector` | Properties of the selected element or band. |
+| `TicketEditorDialogs` | The formula dialogs. Mount once, anywhere. |
+
+The parts reach the state through provide/inject, so they still work when
+teleported into a sheet. Each part carries the theme tokens itself, so it doesn't
+need to sit inside the editor's root element. Everything a toolbar or menu needs
+is on the context that `useTicketEditor()` returns: `addText`, `addQr`,
+`selectPaper`, `zoom`, `print`, `save`, the selection, and so on.
+`useTicketEditorContext()` returns the same object in any descendant. The demo
+at `?layout=custom` is a working example.
+
 ### Internationalization
 
 Built-in English and Spanish, in a local `vue-i18n` scope that **follows the
