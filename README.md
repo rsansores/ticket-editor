@@ -151,9 +151,9 @@ sidebar takes up space:
   open as drawers over them, and the properties drawer opens when you
   select something.
 - **< 720 px (phone):** the ticket becomes a list of lines (`TicketEditorRows`)
-  with an Edit / Preview switch. Tap an element to edit it in a bottom sheet;
-  each line has its own actions (add a line above, remove it, make it a loop or
-  condition).
+  with an Edit / Preview switch. Tap an element to edit it in a bottom sheet.
+  Swipe a line left for its actions (add an object to that line, add a line,
+  make it a loop or condition); swipe it right, then tap, to delete it.
 
 ### Your own layout
 

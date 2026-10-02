@@ -46,29 +46,17 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [doc: TicketDoc] }>()
 
-const {
-  t,
-  selected,
-  selectedBand,
-  selectElement,
-  selectBand,
-  onSelect,
-  addTarget,
-  addText,
-  addImage,
-  addQr,
-  addBarcode,
-  addMarker,
-} = useTicketEditor({
-  modelValue: () => props.modelValue,
-  variables: () => props.variables,
-  variableTypes: () => props.variableTypes,
-  locale: () => props.locale,
-  messages: () => props.messages,
-  onUpdate: (doc) => emit('update:modelValue', doc),
-  onSave: (doc) => props.onSave?.(doc),
-  canSave: () => !!props.onSave,
-})
+const { t, selected, selectedBand, selectElement, selectBand, onSelect, addTarget } =
+  useTicketEditor({
+    modelValue: () => props.modelValue,
+    variables: () => props.variables,
+    variableTypes: () => props.variableTypes,
+    locale: () => props.locale,
+    messages: () => props.messages,
+    onUpdate: (doc) => emit('update:modelValue', doc),
+    onSave: (doc) => props.onSave?.(doc),
+    canSave: () => !!props.onSave,
+  })
 
 // Below WIDE the four zones don't fit beside each other; below MEDIUM the grid
 // canvas itself stops being usable.
@@ -102,32 +90,25 @@ watch(tier, (next) => {
   sheet.value = null
   addTarget.value = null
 })
-// Phone: a line's "+" sets the add target; the picker opens for it. Picking
-// something consumes the target and selects the new element, which swaps this
-// sheet for its properties.
+// Phone: a line's "+ Object" sets the add target; the Objects picker opens for
+// it. Picking something consumes the target and selects the new element, which
+// swaps this sheet for its properties.
 watch(addTarget, (row) => {
   if (row !== null && tier.value === 'narrow') sheet.value = 'add'
 })
-const addTypes = [
-  { key: 'addMenuText', icon: 'T', run: addText },
-  { key: 'addMenuImage', icon: '▣', run: addImage },
-  { key: 'addMenuQr', icon: '▦', run: addQr },
-  { key: 'addMenuBarcode', icon: '▥', run: addBarcode },
-  { key: 'addMenuMarker', icon: '✂', run: addMarker },
-]
 function closeAdd() {
   sheet.value = null
   addTarget.value = null
 }
 
 // Tablet drawers sit over the canvas, so a press anywhere else closes them —
-// except inside a dialog or menu they opened. Pressing an element still opens
+// except inside a dialog they opened. Pressing an element still opens
 // the properties drawer: the selection reopens it in the same tick.
 const leftRail = ref<HTMLElement | null>(null)
 const rightRail = ref<HTMLElement | null>(null)
 function onOutsidePress(e: PointerEvent) {
   const target = e.target as Element | null
-  if (!target || target.closest('.te-modal-backdrop, .te-menu')) return
+  if (!target || target.closest('.te-modal-backdrop')) return
   if (!leftRail.value?.contains(target)) leftOpen.value = false
   if (!rightRail.value?.contains(target)) rightOpen.value = false
 }
@@ -140,7 +121,8 @@ watch(
 )
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePress, true))
 
-// Selecting anything brings its properties into view.
+// Selecting anything, or asking for the ticket settings, brings the inspector
+// into view.
 onSelect(() => {
   if (tier.value === 'narrow') sheet.value = 'inspect'
   else rightOpen.value = true
@@ -149,12 +131,6 @@ onSelect(() => {
 const inspectorTitle = computed(() =>
   selectedBand.value ? t('railBand') : selected.value ? t('railModifiers') : t('railTicket'),
 )
-// The ticket settings are what the inspector shows with nothing selected.
-function openTicket() {
-  selectElement(null)
-  selectBand(null)
-  sheet.value = 'inspect'
-}
 function closeInspector() {
   sheet.value = null
   selectElement(null)
@@ -188,11 +164,6 @@ function closeInspector() {
             {{ t('tabPreview') }}
           </button>
         </div>
-        <div class="te-narrow-actions">
-          <button class="te-narrow-btn" type="button" @click="openTicket">
-            {{ t('railTicket') }}
-          </button>
-        </div>
       </div>
       <div class="te-narrow-main">
         <TicketEditorRows v-if="tab === 'edit'" />
@@ -201,22 +172,10 @@ function closeInspector() {
 
       <BottomSheet
         v-if="sheet === 'add' && addTarget !== null"
-        :title="t('addToLine', { n: addTarget })"
+        :title="t('addToLine')"
         @close="closeAdd"
       >
-        <div class="te-add-types">
-          <button
-            v-for="it in addTypes"
-            :key="it.key"
-            class="te-add-type"
-            type="button"
-            @click="it.run()"
-          >
-            <span class="te-add-ico" aria-hidden="true">{{ it.icon }}</span>
-            {{ t(it.key) }}
-          </button>
-        </div>
-        <TicketEditorVariables />
+        <TicketEditorObjects />
       </BottomSheet>
       <BottomSheet v-if="sheet === 'inspect'" :title="inspectorTitle" @close="closeInspector">
         <TicketEditorInspector />
@@ -372,13 +331,15 @@ function closeInspector() {
   border-bottom: 1px solid var(--te-border);
 }
 .te-tabs {
+  flex: 1;
   display: flex;
   padding: 0.15rem;
   border-radius: calc(var(--te-radius) + 2px);
   background: var(--te-muted);
 }
 .te-tab {
-  min-height: 2.2rem;
+  flex: 1;
+  min-height: 2.4rem;
   padding: 0 0.85rem;
   border: 0;
   border-radius: var(--te-radius);
@@ -392,46 +353,6 @@ function closeInspector() {
   background: var(--te-card);
   color: inherit;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-.te-narrow-actions {
-  display: flex;
-  gap: 0.35rem;
-}
-.te-narrow-btn {
-  min-height: 2.2rem;
-  padding: 0 0.7rem;
-  border: 1px solid var(--te-input);
-  border-radius: var(--te-radius);
-  background: var(--te-card);
-  color: inherit;
-  font: inherit;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.te-add-types {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
-  gap: 0.4rem;
-  margin-bottom: 1rem;
-}
-.te-add-type {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 2.6rem;
-  padding: 0 0.6rem;
-  border: 1px solid var(--te-input);
-  border-radius: var(--te-radius);
-  background: var(--te-card);
-  color: inherit;
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.te-add-ico {
-  width: 1rem;
-  text-align: center;
-  color: var(--te-muted-fg);
 }
 .te-narrow-main {
   flex: 1;

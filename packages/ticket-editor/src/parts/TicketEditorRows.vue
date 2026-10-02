@@ -2,8 +2,10 @@
 // The ticket as a list of lines — the phone's editor. A receipt is mostly
 // one-dimensional (lines, with a few things side by side), so on a narrow
 // screen it edits as a list instead of a 2D grid: tap an element to edit it
-// (row, column and alignment live in its properties), "+" adds to that line,
-// and each line has its own actions. Same document and actions as the canvas.
+// (row, column and alignment live in its properties). Line actions hide behind
+// a swipe so the line keeps the whole width: swipe left for add object / add
+// line / loop, swipe right for delete — which still takes a tap, so a stray
+// swipe can't lose a line. Arrow keys do the same for keyboard users.
 //
 // A list can't show two elements colliding the way the canvas does, so chips
 // carry the canvas's warnings instead: overlapping another element, or running
@@ -26,11 +28,12 @@ const {
   selectedId,
   selectedBandId,
   sampleOf,
+  showFields,
   loopSources,
   selectElement,
   selectBand,
   insertRow,
-  deleteRow,
+  removeLine,
   createRegion,
   addTarget,
 } = useTicketEditorContext()
@@ -100,7 +103,7 @@ function chipText(el: Element): string {
     case 'text':
       return el.content || '""'
     case 'variable':
-      return sampleOf(el) || el.path || ''
+      return (!showFields.value && sampleOf(el)) || el.path || ''
     case 'qr':
       return '▦ QR'
     case 'barcode':
@@ -113,28 +116,121 @@ function chipText(el: Element): string {
   return ''
 }
 
-// One line's actions are open at a time.
-const openRow = ref<number | null>(null)
-function toggleRow(r: number) {
-  openRow.value = openRow.value === r ? null : r
+// ---- swipe ------------------------------------------------------------------
+// Widths of the action trays behind a line (px), measured from the trays (their
+// labels vary by language) when a swipe starts. Swiping past half opens one.
+const trayW = ref({ actions: 228, delete: 96 })
+function measureTrays(line: HTMLElement) {
+  const tray = (side: string) =>
+    line.parentElement?.querySelector<HTMLElement>(`.te-rows-tray.${side}`)?.offsetWidth
+  trayW.value = {
+    actions: tray('actions') ?? trayW.value.actions,
+    delete: tray('delete') ?? trayW.value.delete,
+  }
 }
-function addAbove(r: number) {
-  insertRow(r, rowCount.value)
-  // Stay on the new blank line: its Remove undoes the insert in one tap.
-  openRow.value = r
+// The line whose tray is open: 'actions' is revealed by a left swipe (the tray
+// sits on the right), 'delete' by a right swipe. One line at a time.
+const open = ref<{ row: number; side: 'actions' | 'delete' } | null>(null)
+const drag = ref<{ row: number; x0: number; y0: number; base: number; dx: number } | null>(null)
+// Horizontal intent is only decided after a few pixels, so a vertical scroll
+// that starts on a line stays a scroll.
+let axis: 'x' | 'y' | null = null
+let swiped = false
+
+function restOffset(r: number): number {
+  if (open.value?.row !== r) return 0
+  return open.value.side === 'actions' ? -trayW.value.actions : trayW.value.delete
 }
-function remove(r: number) {
-  deleteRow(r, rowCount.value)
-  openRow.value = null
+function offset(r: number): number {
+  const d = drag.value
+  if (d?.row !== r || axis !== 'x') return restOffset(r)
+  return Math.min(trayW.value.delete, Math.max(-trayW.value.actions, d.base + d.dx))
+}
+function onDown(e: PointerEvent, r: number) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  axis = null
+  swiped = false
+  measureTrays(e.currentTarget as HTMLElement)
+  drag.value = { row: r, x0: e.clientX, y0: e.clientY, base: restOffset(r), dx: 0 }
+}
+function onMove(e: PointerEvent) {
+  const d = drag.value
+  if (!d) return
+  const dx = e.clientX - d.x0
+  const dy = e.clientY - d.y0
+  if (!axis && Math.max(Math.abs(dx), Math.abs(dy)) > 8) {
+    axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+    if (axis === 'x') (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+  if (axis === 'x') {
+    swiped = true
+    d.dx = dx
+  }
+}
+function onUp() {
+  const d = drag.value
+  if (d && axis === 'x') {
+    const at = Math.min(trayW.value.delete, Math.max(-trayW.value.actions, d.base + d.dx))
+    if (at <= -trayW.value.actions / 2) open.value = { row: d.row, side: 'actions' }
+    else if (at >= trayW.value.delete / 2) open.value = { row: d.row, side: 'delete' }
+    else open.value = null
+  }
+  drag.value = null
+  axis = null
+}
+// A swipe ends in a click on whatever chip it started on; swallow that one.
+// A tap on a line whose tray is open just closes the tray.
+function onClickCapture(e: MouseEvent, r: number) {
+  if (swiped || open.value?.row === r) {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!swiped) open.value = null
+  }
+  swiped = false
+}
+function onKey(e: KeyboardEvent, r: number) {
+  if (e.target !== e.currentTarget) return
+  measureTrays(e.currentTarget as HTMLElement)
+  if (e.key === 'ArrowLeft') open.value = { row: r, side: 'actions' }
+  else if (e.key === 'ArrowRight') open.value = { row: r, side: 'delete' }
+  else if (e.key === 'Escape') open.value = null
+  else return
+  e.preventDefault()
+}
+
+function addObject(r: number) {
+  open.value = null
+  addTarget.value = r
+}
+function addLineBelow(r: number) {
+  open.value = null
+  insertRow(r + 1, rowCount.value)
 }
 function makeBand(r: number) {
-  openRow.value = null
+  open.value = null
   createRegion({ start_row: r, end_row: r + 1, source: loopSources.value[0]?.path })
+}
+function deleteLine(r: number) {
+  open.value = null
+  removeLine(r, rowCount.value)
 }
 </script>
 
 <template>
   <div class="te-part te-rows">
+    <div class="te-rows-top">
+      <p class="te-rows-hint">{{ t('rowsSwipeHint') }}</p>
+      <button
+        class="te-rows-fields"
+        :class="{ on: showFields }"
+        type="button"
+        :aria-pressed="showFields"
+        :title="t('showFieldsTip')"
+        @click="showFields = !showFields"
+      >
+        {{ t('showFields') }}
+      </button>
+    </div>
     <template v-for="r in lines" :key="r">
       <button
         v-if="bandStarting(r)"
@@ -148,17 +244,36 @@ function makeBand(r: number) {
       >
         {{ bandDescription(bandStarting(r)!, t) }}
       </button>
-      <div
-        class="te-rows-line"
-        :class="{
-          empty: isEmpty(r),
-          'in-band': !!bandOf(r),
-          loop: !!bandOf(r)?.source,
-          open: openRow === r,
-        }"
-      >
-        <span class="te-rows-num">{{ r }}</span>
-        <div class="te-rows-chips">
+      <div class="te-rows-swipe" :class="{ 'in-band': !!bandOf(r), loop: !!bandOf(r)?.source }">
+        <div class="te-rows-tray delete" :inert="open?.row !== r || open.side !== 'delete'">
+          <button class="te-rows-act danger" type="button" @click="deleteLine(r)">
+            {{ t('rowDelete') }}
+          </button>
+        </div>
+        <div class="te-rows-tray actions" :inert="open?.row !== r || open.side !== 'actions'">
+          <button class="te-rows-act" type="button" @click="addObject(r)">
+            {{ t('rowAddObject') }}
+          </button>
+          <button class="te-rows-act" type="button" @click="addLineBelow(r)">
+            {{ t('rowAddLine') }}
+          </button>
+          <button v-if="!bandOf(r)" class="te-rows-act" type="button" @click="makeBand(r)">
+            {{ t('rowMakeBand') }}
+          </button>
+        </div>
+        <div
+          class="te-rows-line"
+          :class="{ empty: isEmpty(r), dragging: drag?.row === r }"
+          :style="{ transform: `translateX(${offset(r)}px)` }"
+          tabindex="0"
+          :aria-label="t('rowLine', { n: r })"
+          @pointerdown="onDown($event, r)"
+          @pointermove="onMove"
+          @pointerup="onUp"
+          @pointercancel="onUp"
+          @click.capture="onClickCapture($event, r)"
+          @keydown="onKey($event, r)"
+        >
           <button
             v-for="el in byRow.get(r) ?? []"
             :key="el.id"
@@ -175,41 +290,6 @@ function makeBand(r: number) {
           </button>
           <span v-if="isEmpty(r)" class="te-rows-blank">{{ t('rowBlank') }}</span>
         </div>
-        <button
-          class="te-rows-add"
-          type="button"
-          :aria-label="t('addToLine', { n: r })"
-          :title="t('addToLine', { n: r })"
-          @click="addTarget = r"
-        >
-          +
-        </button>
-        <button
-          class="te-rows-more"
-          type="button"
-          :aria-expanded="openRow === r"
-          :aria-label="t('rowActions', { n: r })"
-          @click="toggleRow(r)"
-        >
-          ⋯
-        </button>
-        <div v-if="openRow === r" class="te-rows-actions">
-          <button class="te-rows-act" type="button" @click="addAbove(r)">
-            {{ t('rowAddAbove') }}
-          </button>
-          <button
-            class="te-rows-act danger"
-            type="button"
-            :disabled="!isEmpty(r)"
-            :title="isEmpty(r) ? undefined : t('rowRemoveBlocked')"
-            @click="remove(r)"
-          >
-            {{ t('rowRemove') }}
-          </button>
-          <button v-if="!bandOf(r)" class="te-rows-act" type="button" @click="makeBand(r)">
-            ↻ {{ t('rowMakeBand') }}
-          </button>
-        </div>
       </div>
     </template>
     <button class="te-rows-append" type="button" @click="insertRow(rowCount, rowCount)">
@@ -223,6 +303,36 @@ function makeBand(r: number) {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+}
+.te-rows-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.2rem;
+}
+.te-rows-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  color: var(--te-muted-fg);
+}
+.te-rows-fields {
+  flex: none;
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--te-input);
+  border-radius: 999px;
+  background: var(--te-card);
+  color: var(--te-muted-fg);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.te-rows-fields.on {
+  border-color: color-mix(in srgb, var(--te-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--te-primary) 14%, transparent);
+  color: var(--te-primary);
 }
 .te-rows-band {
   align-self: flex-start;
@@ -245,39 +355,61 @@ function makeBand(r: number) {
 .te-rows-band.selected {
   outline: 2px solid var(--te-ring);
 }
-.te-rows-line {
-  display: grid;
-  grid-template-columns: 1.6rem minmax(0, 1fr) 2.4rem 2.4rem;
+/* a line: its content slides over the two action trays behind it */
+.te-rows-swipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--te-radius);
+  background: var(--te-muted);
+}
+.te-rows-tray {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
+  padding: 0 0.4rem;
+}
+.te-rows-tray.delete {
+  left: 0;
+  background: color-mix(in srgb, #dc2626 14%, var(--te-card));
+}
+.te-rows-tray.actions {
+  right: 0;
+}
+.te-rows-line {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
   min-height: 2.75rem;
-  padding: 0.25rem 0.25rem 0.25rem 0.4rem;
+  padding: 0.35rem 0.5rem;
   border: 1px solid var(--te-border);
   border-radius: var(--te-radius);
   background: var(--te-card);
+  transition: transform 0.18s ease-out;
+  /* vertical pans scroll the list; horizontal ones are the swipe */
+  touch-action: pan-y;
+  user-select: none;
 }
-.te-rows-line.in-band {
+.te-rows-line.dragging {
+  transition: none;
+}
+.te-rows-line:focus-visible {
+  outline: 2px solid var(--te-ring);
+  outline-offset: -2px;
+}
+.te-rows-swipe.in-band .te-rows-line {
   border-left: 3px solid #f59e0b;
 }
-.te-rows-line.in-band.loop {
+.te-rows-swipe.in-band.loop .te-rows-line {
   border-left-color: var(--te-primary);
 }
 .te-rows-line.empty {
   min-height: 2.2rem;
   border-style: dashed;
-  background: transparent;
-}
-.te-rows-num {
-  font-family: ui-monospace, monospace;
-  font-size: 0.7rem;
-  color: var(--te-muted-fg);
-  text-align: right;
-}
-.te-rows-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  min-width: 0;
 }
 .te-rows-chip {
   max-width: 100%;
@@ -309,6 +441,11 @@ function makeBand(r: number) {
   border-style: dashed;
   color: var(--te-muted-fg);
 }
+.te-rows-chip.warn {
+  border-color: #d97706;
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  color: #b45309;
+}
 .te-rows-chip.selected {
   outline: 2px solid var(--te-ring);
   outline-offset: 1px;
@@ -318,59 +455,22 @@ function makeBand(r: number) {
   color: var(--te-muted-fg);
   font-style: italic;
 }
-.te-rows-chip.warn {
-  border-color: #d97706;
-  background: color-mix(in srgb, #f59e0b 14%, transparent);
-  color: #b45309;
-}
-.te-rows-add {
-  width: 2.4rem;
-  height: 2.2rem;
-  border: 0;
-  border-radius: calc(var(--te-radius) - 2px);
-  background: color-mix(in srgb, var(--te-primary) 8%, transparent);
-  color: var(--te-primary);
-  font-size: 1.1rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-.te-rows-more {
-  width: 2.4rem;
-  height: 2.2rem;
-  border: 0;
-  border-radius: calc(var(--te-radius) - 2px);
-  background: transparent;
-  color: var(--te-muted-fg);
-  font-size: 1.1rem;
-  cursor: pointer;
-}
-.te-rows-line.open .te-rows-more {
-  background: var(--te-muted);
-}
-.te-rows-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  padding: 0.3rem 0 0.1rem;
-}
 .te-rows-act {
   min-height: 2.2rem;
-  padding: 0.3rem 0.7rem;
+  padding: 0.3rem 0.55rem;
   border: 1px solid var(--te-input);
   border-radius: calc(var(--te-radius) - 2px);
   background: var(--te-card);
   color: inherit;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
   cursor: pointer;
 }
 .te-rows-act.danger {
-  color: #dc2626;
-}
-.te-rows-act:disabled {
-  opacity: 0.45;
-  cursor: default;
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
 }
 .te-rows-append {
   min-height: 2.6rem;

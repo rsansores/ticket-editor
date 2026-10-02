@@ -772,6 +772,16 @@ function createTicketEditor(opts: TicketEditorOptions) {
     doc.value.paper.min_rows = Math.max(0, eff - 1)
   }
 
+  // Delete a whole line WITH what starts on it (the phone's swipe-to-delete,
+  // which asks for a deliberate tap). Unlike deleteRow it doesn't need the line
+  // to be empty; the elements go, then the line closes up like deleteRow.
+  function removeLine(row: number, eff: number) {
+    const gone = new Set(doc.value.elements.filter((e) => e.row === row).map((e) => e.id))
+    doc.value.elements = doc.value.elements.filter((e) => !gone.has(e.id))
+    if (selectedId.value && gone.has(selectedId.value)) selectedId.value = null
+    deleteRow(row, eff)
+  }
+
   // --- flow bands ---
   function createRegion(r: Omit<Region, 'id'>) {
     const region: Region = { ...r, id: `rg_${(seq += 1)}_${Math.floor(Math.random() * 1e6)}` }
@@ -917,6 +927,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
     collapseRow,
     insertRow,
     deleteRow,
+    removeLine,
     // bands
     createRegion,
     updateRegion,

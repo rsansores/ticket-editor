@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Everything that can go on the ticket, in one place: static objects (text,
 // image, QR, barcode, a printer action), the host's variables and the
-// calculated values. Clicking one places it on a new line at the bottom.
+// calculated values. Clicking one places it — on a new line at the bottom, or
+// on the line in `addTarget` when one is set.
 import TicketEditorVariables from './TicketEditorVariables.vue'
 import { useTicketEditorContext } from '../core/useTicketEditor'
 
