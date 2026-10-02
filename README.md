@@ -141,6 +141,20 @@ Embedded in an app that defines those tokens, it inherits the host look
 automatically; standalone it uses the defaults. It has **no dependency on any
 host UI kit**.
 
+### Screen sizes
+
+`<TicketEditor>` adapts to its own width, not the window's, because a host
+sidebar takes up space:
+
+- **≥ 1180 px:** four zones side by side.
+- **720–1180 px (tablet):** canvas and preview. Variables and properties
+  open as drawers over them, and the properties drawer opens when you
+  select something.
+- **< 720 px (phone):** the ticket becomes a list of lines (`TicketEditorRows`)
+  with an Edit / Preview switch. Tap an element to edit it in a bottom sheet;
+  each line has its own actions (add a line above, remove it, make it a loop or
+  condition).
+
 ### Your own layout
 
 `<TicketEditor>` is one layout over a headless core. When your app has its own
@@ -188,6 +202,7 @@ editor.onSelect(() => (inspectorOpen.value = true))
 | `TicketEditorObjects` | Everything that can go on the ticket: static objects (text, image, QR, barcode, cut), variables and calculated values. Clicking one places it. |
 | `TicketEditorVariables` | Just the variables and calculated values, if you place the static objects yourself. |
 | `TicketEditorCanvas` | The structural grid editor, with its zoom / fit / fields controls. |
+| `TicketEditorRows` | The ticket as a list of lines, for phones: tap an element to edit it. |
 | `TicketEditorPreview` | The 1:1 wasm preview. |
 | `TicketEditorInspector` | Properties of the selected element or band, or the ticket's paper settings when nothing is selected. |
 | `TicketEditorDialogs` | The formula dialogs. Mount once, anywhere. |
