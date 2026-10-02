@@ -111,3 +111,69 @@ fn real_values_serialize_as_expected() {
         .unwrap()
         .starts_with("2030-01-15T10:30:00"));
 }
+
+#[derive(Printable)]
+struct Address {
+    street: String,
+    latitude: Option<Decimal>,
+}
+
+#[allow(dead_code)]
+#[derive(Printable)]
+struct Unit {
+    code: String,
+    #[printable(hidden)]
+    owner_id: Uuid,
+}
+
+/// A read model wrapping a row: the row's variables at its own level, the
+/// address nested under its name.
+#[derive(Printable)]
+struct UnitWithAddress {
+    #[printable(flatten)]
+    unit: Unit,
+    address: Option<Address>,
+}
+
+#[derive(Printable)]
+struct UnitContext {
+    reception_unit: UnitWithAddress,
+}
+
+#[test]
+fn a_flattened_field_lifts_its_variables_to_the_holder() {
+    let types = editor_var_types::<UnitContext>();
+    assert_eq!(
+        types.get("reception_unit.code").map(String::as_str),
+        Some("text")
+    );
+    assert_eq!(
+        types
+            .get("reception_unit.address.latitude")
+            .map(String::as_str),
+        Some("number")
+    );
+    assert!(!types.contains_key("reception_unit.unit.code"));
+    assert!(
+        !types.contains_key("reception_unit.owner_id"),
+        "hidden stays hidden"
+    );
+
+    let unit = UnitWithAddress {
+        unit: Unit {
+            code: "1001".into(),
+            owner_id: Uuid::nil(),
+        },
+        address: Some(Address {
+            street: "Av. Juárez".into(),
+            latitude: Some(Decimal::from_str("25.6714").unwrap()),
+        }),
+    };
+    let real = unit.to_value();
+    assert_eq!(real["code"], "1001");
+    assert_eq!(real["address"]["street"], "Av. Juárez");
+    assert!(real.get("unit").is_none());
+
+    let sample = UnitWithAddress::sample_json();
+    assert!(sample.get("code").is_some() && sample.get("address").is_some());
+}
