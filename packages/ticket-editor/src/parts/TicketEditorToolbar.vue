@@ -1,16 +1,13 @@
 <script setup lang="ts">
-// The default toolbar: paper, zoom, add-element buttons, print and save. A host
-// with its own buttons skips this and calls the same actions on the context.
-import { PAPER_PRESETS } from '../lib/paper'
+// The default toolbar: one Add menu, the paper warning when it applies, print
+// and save. Paper setup lives in the inspector (with nothing selected) and view
+// controls float on the canvas, so this stays one short row. A host with its
+// own buttons skips this and calls the same actions on the context.
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useTicketEditorContext } from '../core/useTicketEditor'
 
 const {
   t,
-  doc,
-  zoom,
-  paperId,
-  selectPaper,
-  setWidthChars,
   dotWidth,
   dotWidthOk,
   addText,
@@ -18,6 +15,8 @@ const {
   addQr,
   addBarcode,
   addMarker,
+  selectElement,
+  selectBand,
   printing,
   printError,
   print,
@@ -25,59 +24,78 @@ const {
   saving,
   save,
 } = useTicketEditorContext()
+
+const addItems = [
+  { key: 'addMenuText', icon: 'T', run: addText },
+  { key: 'addMenuImage', icon: '▣', run: addImage },
+  { key: 'addMenuQr', icon: '▦', run: addQr },
+  { key: 'addMenuBarcode', icon: '▥', run: addBarcode },
+  { key: 'addMenuMarker', icon: '✂', run: addMarker },
+]
+
+const menuOpen = ref(false)
+const menuEl = ref<HTMLElement | null>(null)
+function pick(run: () => void) {
+  menuOpen.value = false
+  run()
+}
+// Close on a press anywhere else, or Escape — a plain disclosure menu.
+function onDocPointer(e: PointerEvent) {
+  if (menuEl.value && !menuEl.value.contains(e.target as Node)) menuOpen.value = false
+}
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') menuOpen.value = false
+}
+function unlisten() {
+  document.removeEventListener('pointerdown', onDocPointer, true)
+  document.removeEventListener('keydown', onKey)
+}
+watch(menuOpen, (open) => {
+  if (!open) return unlisten()
+  document.addEventListener('pointerdown', onDocPointer, true)
+  document.addEventListener('keydown', onKey)
+})
+onBeforeUnmount(unlisten)
 </script>
 
 <template>
   <header class="te-part te-toolbar">
     <strong class="te-title">{{ t('title') }}</strong>
-    <label class="te-inline"
-      >{{ t('paper') }}
-      <select
-        class="te-select"
-        :value="paperId"
-        :title="t('paperTip')"
-        @change="selectPaper(($event.target as HTMLSelectElement).value)"
+    <div ref="menuEl" class="te-add">
+      <button
+        class="te-btn te-btn-ghost"
+        type="button"
+        aria-haspopup="menu"
+        :aria-expanded="menuOpen"
+        @click="menuOpen = !menuOpen"
       >
-        <option v-for="p in PAPER_PRESETS" :key="p.id" :value="p.id">
-          {{ t('paperOption', { mm: p.paperMm, dots: p.dots }) }}
-        </option>
-        <option value="custom">{{ t('paperCustom') }}</option>
-      </select>
-    </label>
-    <label class="te-inline"
-      >{{ t('width') }}
-      <input
-        class="te-num"
-        type="number"
-        min="16"
-        max="120"
-        :value="doc.paper.width_chars"
-        @input="setWidthChars(+($event.target as HTMLInputElement).value)"
-      />
-    </label>
-    <label class="te-inline"
-      >{{ t('zoom') }}
-      <input type="range" min="0.8" max="2.2" step="0.1" v-model.number="zoom" />
-      <span class="te-muted">{{ zoom.toFixed(1) }}×</span>
-    </label>
-    <button class="te-btn te-btn-ghost" type="button" @click="addText">{{ t('addText') }}</button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addImage">
-      {{ t('addImage') }}
-    </button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addQr">{{ t('addQr') }}</button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">
-      {{ t('addBarcode') }}
-    </button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addMarker">
-      {{ t('addMarker') }}
-    </button>
-    <span
+        {{ t('add') }} <span class="te-caret" aria-hidden="true">▾</span>
+      </button>
+      <div v-if="menuOpen" class="te-menu" role="menu">
+        <button
+          v-for="it in addItems"
+          :key="it.key"
+          class="te-menu-item"
+          type="button"
+          role="menuitem"
+          @click="pick(it.run)"
+        >
+          <span class="te-menu-ico" aria-hidden="true">{{ it.icon }}</span>
+          {{ t(it.key) }}
+        </button>
+        <p class="te-menu-hint">{{ t('addMenuHint') }}</p>
+      </div>
+    </div>
+    <!-- Clearing the selection shows the ticket settings, where this is fixed. -->
+    <button
       v-if="!dotWidthOk"
       class="te-chip te-chip-warn"
+      type="button"
       :title="t('dotWidthWarnTip', { px: dotWidth })"
+      @click="(selectElement(null), selectBand(null))"
     >
       {{ t('dotWidthWarn', { px: dotWidth }) }}
-    </span>
+    </button>
     <div class="te-spacer" />
     <span v-if="printError" class="te-chip te-chip-warn" :title="printError">{{ printError }}</span>
     <button
@@ -130,27 +148,57 @@ const {
 .te-spacer {
   flex: 1;
 }
-.te-inline {
+.te-add {
+  position: relative;
+}
+.te-caret {
+  margin-left: 0.15rem;
+  opacity: 0.7;
+}
+.te-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 12rem;
+  padding: 0.25rem;
+  border: 1px solid var(--te-border);
+  border-radius: var(--te-radius);
+  background: var(--te-card);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.te-menu-item {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  color: var(--te-muted-fg);
-}
-.te-muted {
-  color: var(--te-muted-fg);
-}
-.te-select {
-  /* Wide enough for "80 mm (576 dots)" plus room for the native chevron, which
-     sat on top of the text when this reused .te-num (3.6rem, sized for a
-     two-digit number box). */
-  padding: 0.25rem 0.4rem;
-  padding-right: 1.6rem;
-  border: 1px solid var(--te-input);
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 0;
   border-radius: calc(var(--te-radius) - 2px);
-  background: var(--te-card);
+  background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.te-menu-item:hover,
+.te-menu-item:focus-visible {
+  background: var(--te-accent);
+  outline: none;
+}
+.te-menu-ico {
+  width: 1rem;
+  text-align: center;
+  color: var(--te-muted-fg);
+}
+.te-menu-hint {
+  margin: 0.25rem 0 0;
+  padding: 0.4rem 0.5rem 0.2rem;
+  border-top: 1px solid var(--te-border);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--te-muted-fg);
 }
 
 .te-btn-icon {
@@ -163,16 +211,6 @@ const {
   width: 1.05em;
   height: 1.05em;
   flex: none;
-}
-
-.te-num {
-  width: 3.6rem;
-  padding: 0.25rem 0.4rem;
-  border: 1px solid var(--te-input);
-  border-radius: calc(var(--te-radius) - 2px);
-  background: var(--te-card);
-  color: inherit;
-  font: inherit;
 }
 .te-btn {
   padding: 0.4rem 0.75rem;

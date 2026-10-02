@@ -38,7 +38,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [doc: TicketDoc] }>()
 
-const { t, selectedBand, onSelect } = useTicketEditor({
+const { t, selected, selectedBand, onSelect } = useTicketEditor({
   modelValue: () => props.modelValue,
   variables: () => props.variables,
   variableTypes: () => props.variableTypes,
@@ -98,7 +98,9 @@ onSelect(() => {
           {{ rightOpen ? '›' : '‹' }}
         </button>
         <div v-if="rightOpen" class="te-rail-inner">
-          <h3 class="te-rail-title">{{ selectedBand ? t('railBand') : t('railModifiers') }}</h3>
+          <h3 class="te-rail-title">
+            {{ selectedBand ? t('railBand') : selected ? t('railModifiers') : t('railTicket') }}
+          </h3>
           <TicketEditorInspector />
         </div>
       </aside>

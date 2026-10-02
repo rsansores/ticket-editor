@@ -184,11 +184,11 @@ editor.onSelect(() => (inspectorOpen.value = true))
 
 | Part | What it is |
 |------|------------|
-| `TicketEditorToolbar` | The built-in toolbar (paper, zoom, add, print, save). Skip it to use your own buttons. |
+| `TicketEditorToolbar` | The built-in toolbar (Add menu, print, save). Skip it to use your own buttons. |
 | `TicketEditorVariables` | Variable tree and calculated values. Clicking one places it. |
-| `TicketEditorCanvas` | The structural grid editor. |
+| `TicketEditorCanvas` | The structural grid editor, with its zoom / fit / fields controls. |
 | `TicketEditorPreview` | The 1:1 wasm preview. |
-| `TicketEditorInspector` | Properties of the selected element or band. |
+| `TicketEditorInspector` | Properties of the selected element or band, or the ticket's paper settings when nothing is selected. |
 | `TicketEditorDialogs` | The formula dialogs. Mount once, anywhere. |
 
 The parts reach the state through provide/inject, so they still work when
