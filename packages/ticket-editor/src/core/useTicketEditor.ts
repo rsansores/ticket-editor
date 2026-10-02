@@ -68,8 +68,11 @@ export interface TicketEditorOptions {
   canSave?: MaybeRefOrGetter<boolean>
 }
 
-/** What was just selected. Fired only for a real selection, never a clear. */
-export type EditorSelection = { kind: 'element' | 'band'; id: string }
+/**
+ * What the user just asked to inspect: an element, a band, or the whole
+ * ticket's settings. Fired for a real request, never for a plain clear.
+ */
+export type EditorSelection = { kind: 'element' | 'band'; id: string } | { kind: 'ticket' }
 
 function blankDoc(): TicketDoc {
   return {
@@ -234,6 +237,15 @@ function createTicketEditor(opts: TicketEditorOptions) {
       selectedId.value = null
       for (const fn of selectListeners) fn({ kind: 'band', id })
     }
+  }
+
+  // The inspector shows the ticket's settings when nothing is selected; this
+  // clears the selection AND tells the layout to bring the inspector into view
+  // (a plain clear, like clicking empty canvas, doesn't).
+  function showTicketSettings() {
+    selectedId.value = null
+    selectedBandId.value = null
+    for (const fn of selectListeners) fn({ kind: 'ticket' })
   }
 
   // preview data: real variables, or a reshuffled clone when the user asks.
@@ -860,6 +872,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
     selectedCondVars,
     selectElement,
     selectBand,
+    showTicketSettings,
     onSelect,
     // preview
     previewData,

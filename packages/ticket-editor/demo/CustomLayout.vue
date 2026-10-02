@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // A host-owned layout, the way an app with its own design system embeds the
-// editor: its own toolbar buttons, and the variables and inspector in its own
+// editor: its own toolbar buttons, and the objects and inspector in its own
 // drawers, teleported to <body> outside any `.te-root`. Served at ?layout=custom.
 import { ref } from 'vue'
 import {
@@ -8,7 +8,7 @@ import {
   TicketEditorDialogs,
   TicketEditorInspector,
   TicketEditorPreview,
-  TicketEditorVariables,
+  TicketEditorObjects,
   useTicketEditor,
 } from '../src'
 import type { TicketDoc, VariableType } from '../src'
@@ -37,9 +37,8 @@ editor.onSelect(() => {
 <template>
   <div class="host">
     <header class="host-bar">
-      <button @click="leftOpen = !leftOpen">Variables</button>
-      <button @click="editor.addText">Add text</button>
-      <button @click="editor.addQr">Add QR</button>
+      <button @click="leftOpen = !leftOpen">Objects</button>
+      <button @click="editor.showTicketSettings">Ticket</button>
       <span class="host-grow" />
       <button @click="editor.print">Print</button>
     </header>
@@ -52,7 +51,7 @@ editor.onSelect(() => {
     <Teleport to="body">
       <aside v-if="leftOpen" class="host-drawer left">
         <button class="host-x" @click="leftOpen = false">×</button>
-        <TicketEditorVariables />
+        <TicketEditorObjects />
       </aside>
       <aside v-if="rightOpen" class="host-drawer right">
         <button class="host-x" @click="rightOpen = false">×</button>

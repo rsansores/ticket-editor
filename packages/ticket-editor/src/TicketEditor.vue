@@ -12,7 +12,7 @@
 import { ref } from 'vue'
 import { useTicketEditor } from './core/useTicketEditor'
 import TicketEditorToolbar from './parts/TicketEditorToolbar.vue'
-import TicketEditorVariables from './parts/TicketEditorVariables.vue'
+import TicketEditorObjects from './parts/TicketEditorObjects.vue'
 import TicketEditorCanvas from './parts/TicketEditorCanvas.vue'
 import TicketEditorPreview from './parts/TicketEditorPreview.vue'
 import TicketEditorInspector from './parts/TicketEditorInspector.vue'
@@ -67,14 +67,14 @@ onSelect(() => {
           class="te-rail-toggle"
           type="button"
           @click="leftOpen = !leftOpen"
-          :aria-label="leftOpen ? t('collapse') : t('railVariables')"
+          :aria-label="leftOpen ? t('collapse') : t('railObjects')"
           :aria-expanded="leftOpen"
-          :title="leftOpen ? t('collapse') : t('railVariables')"
+          :title="leftOpen ? t('collapse') : t('railObjects')"
         >
           {{ leftOpen ? '‹' : '›' }}
         </button>
         <div v-if="leftOpen" class="te-rail-inner">
-          <TicketEditorVariables />
+          <TicketEditorObjects />
         </div>
       </aside>
 
