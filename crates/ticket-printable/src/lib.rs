@@ -28,6 +28,10 @@
 //! model columns show up in the editor automatically; hide the few internal
 //! fields (ids, foreign keys, sync flags, secrets) explicitly.
 //!
+//! `#[printable(flatten)]` lifts a nested struct's variables to the level of
+//! the struct holding it, as `serde(flatten)` does: a read model wrapping a row
+//! prints the row's fields as its own.
+//!
 //! [`ticket-core`]: https://crates.io/crates/ticket-core
 
 #![forbid(unsafe_code)]

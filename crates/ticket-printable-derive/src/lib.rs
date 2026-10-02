@@ -19,6 +19,15 @@
 //! column added to a model becomes available in the editor automatically; there
 //! is nothing to remember to update. Hide the handful of internal fields (ids,
 //! foreign keys, sync flags, secrets) explicitly.
+//!
+//! ## Flattening
+//!
+//! `#[printable(flatten)]` lifts a nested struct's variables to the level of
+//! the struct that holds it, as `serde(flatten)` does — so a read model that
+//! wraps a row (`{ unit: Unit, address: Option<Address> }`) prints
+//! `reception_unit.code` and `reception_unit.address.street`, not
+//! `reception_unit.unit.code`. The flattened field must project to an object;
+//! one that projects to anything else (an `Option` that is `None`) adds nothing.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -26,9 +35,9 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
 /// Derive [`ticket_printable::Printable`] for a struct with named fields.
 ///
-/// Field attribute: `#[printable(hidden)]` excludes the field from every
-/// projection. That is the entire vocabulary — pure denylist, nothing else to
-/// learn.
+/// Field attributes: `#[printable(hidden)]` excludes the field from every
+/// projection; `#[printable(flatten)]` lifts its variables to this struct's
+/// level.
 #[proc_macro_derive(Printable, attributes(printable))]
 pub fn derive_printable(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -65,6 +74,27 @@ pub fn derive_printable(input: TokenStream) -> TokenStream {
         let ident = f.ident.as_ref().expect("named field");
         let ty = &f.ty;
         let key = ident.to_string();
+
+        if has_flag(f, "flatten") {
+            to_value.push(quote! {
+                if let ::ticket_printable::serde_json::Value::Object(__inner) =
+                    ::ticket_printable::Printable::to_value(&self.#ident)
+                {
+                    __map.extend(__inner);
+                }
+            });
+            sample.push(quote! {
+                if let ::ticket_printable::serde_json::Value::Object(__inner) =
+                    <#ty as ::ticket_printable::Printable>::sample_json()
+                {
+                    __map.extend(__inner);
+                }
+            });
+            var_types.push(quote! {
+                <#ty as ::ticket_printable::Printable>::var_types(__prefix, __out);
+            });
+            continue;
+        }
 
         to_value.push(quote! {
             __map.insert(#key.to_string(), ::ticket_printable::Printable::to_value(&self.#ident));
@@ -105,19 +135,24 @@ pub fn derive_printable(input: TokenStream) -> TokenStream {
 
 /// True when the field carries `#[printable(hidden)]`.
 fn is_hidden(field: &syn::Field) -> bool {
-    let mut hidden = false;
+    has_flag(field, "hidden")
+}
+
+/// True when the field's `#[printable(...)]` holds `flag`.
+fn has_flag(field: &syn::Field, flag: &str) -> bool {
+    let mut found = false;
     for attr in &field.attrs {
         if !attr.path().is_ident("printable") {
             continue;
         }
-        // Best-effort parse of `hidden` inside `#[printable(...)]`. Unknown
-        // tokens are ignored so the vocabulary can grow without breaking.
+        // Best-effort parse inside `#[printable(...)]`. Unknown tokens are
+        // ignored so the vocabulary can grow without breaking.
         let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("hidden") {
-                hidden = true;
+            if meta.path.is_ident(flag) {
+                found = true;
             }
             Ok(())
         });
     }
-    hidden
+    found
 }
