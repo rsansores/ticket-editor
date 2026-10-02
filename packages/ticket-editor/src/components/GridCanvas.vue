@@ -488,6 +488,9 @@ function onPointerUp() {
 <style scoped>
 .te-canvas-wrap {
   overflow: auto;
+  /* Reserve the vertical scrollbar's room even before rows overflow, so a long
+     ticket appearing doesn't shrink the width Fit measured. */
+  scrollbar-gutter: stable;
   padding: 1.25rem;
   /* the overflow zone: greyed area beyond the paper */
   background:

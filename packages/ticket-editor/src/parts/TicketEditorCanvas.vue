@@ -28,16 +28,31 @@ const {
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 2.2
-const clamp = (z: number) => Math.round(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)) * 10) / 10
+const clamp = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
 
-// Room the canvas chrome takes besides the paper: the wrap's padding on both
-// sides plus the row gutter and its gap (see GridCanvas styles).
-const CHROME_PX = 2 * 20 + 96 + 4
 const root = ref<HTMLElement | null>(null)
+const wrapEl = () => root.value?.querySelector<HTMLElement>('.te-canvas-wrap') ?? null
+
+// The largest zoom at which the paper fits the canvas without a horizontal
+// scrollbar. Measured, not assumed: the room inside the wrap's padding and
+// scrollbar, minus the row gutter. Rounded DOWN — rounding up is what made Fit
+// scroll by a few pixels.
 function fitZoom(): number {
-  const avail = (root.value?.clientWidth ?? 0) - CHROME_PX
+  const wrap = wrapEl()
+  const gutter = root.value?.querySelector<HTMLElement>('.te-gutter')
+  const stage = gutter?.parentElement
+  if (!wrap || !gutter || !stage) return zoom.value
+  const cs = getComputedStyle(wrap)
+  const stageGap = parseFloat(getComputedStyle(stage).columnGap) || 0
+  const avail =
+    wrap.clientWidth -
+    parseFloat(cs.paddingLeft) -
+    parseFloat(cs.paddingRight) -
+    gutter.offsetWidth -
+    stageGap
   const paperPx = (doc.value.paper.width_chars + 1) * (doc.value.paper.cell_width_px ?? 12)
-  return avail > 0 ? clamp(Math.min(1.4, avail / paperPx)) : zoom.value
+  if (avail <= 0) return zoom.value
+  return clamp(Math.floor(Math.min(1.4, avail / paperPx) * 100) / 100)
 }
 // Follow the container's width (a rail opening, the window resizing) until the
 // user picks a zoom themselves; Fit hands control back.
@@ -48,15 +63,33 @@ function fit() {
 }
 function step(d: number) {
   following.value = false
-  zoom.value = clamp(zoom.value + d)
+  zoom.value = clamp(Math.round((zoom.value + d) * 10) / 10)
 }
+
+// The view controls float over the canvas's corner; keep them clear of its
+// scrollbars, which come and go with the zoom and the ticket's length.
+const scrollbar = ref({ right: 0, bottom: 0 })
+function measureScrollbars() {
+  const wrap = wrapEl()
+  if (!wrap) return
+  scrollbar.value = {
+    right: wrap.offsetWidth - wrap.clientWidth,
+    bottom: wrap.offsetHeight - wrap.clientHeight,
+  }
+}
+
 let ro: ResizeObserver | undefined
 onMounted(() => {
   fit()
   ro = new ResizeObserver(() => {
     if (following.value) zoom.value = fitZoom()
+    measureScrollbars()
   })
   if (root.value) ro.observe(root.value)
+  // The stage grows with rows and zoom; that is what makes scrollbars appear.
+  const stage = root.value?.querySelector('.te-stage')
+  if (stage) ro.observe(stage)
+  measureScrollbars()
 })
 onBeforeUnmount(() => ro?.disconnect())
 // A different paper width changes what "fit" means.
@@ -88,7 +121,13 @@ watch(
       @create-region="createRegion"
       @remove-region="removeRegion"
     />
-    <div class="te-view-ctl">
+    <div
+      class="te-view-ctl"
+      :style="{
+        right: `calc(0.6rem + ${scrollbar.right}px)`,
+        bottom: `calc(0.6rem + ${scrollbar.bottom}px)`,
+      }"
+    >
       <button
         class="te-view-btn"
         :class="{ on: showFields }"
