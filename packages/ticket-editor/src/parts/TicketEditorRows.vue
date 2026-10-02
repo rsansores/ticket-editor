@@ -231,85 +231,108 @@ function deleteLine(r: number) {
         {{ t('showFields') }}
       </button>
     </div>
-    <template v-for="r in lines" :key="r">
-      <button
-        v-if="bandStarting(r)"
-        class="te-rows-band"
-        :class="{
-          loop: !!bandStarting(r)!.source,
-          selected: bandStarting(r)!.id === selectedBandId,
-        }"
-        type="button"
-        @click="selectBand(bandStarting(r)!.id)"
-      >
-        {{ bandDescription(bandStarting(r)!, t) }}
-      </button>
-      <div class="te-rows-swipe" :class="{ 'in-band': !!bandOf(r), loop: !!bandOf(r)?.source }">
-        <div class="te-rows-tray delete" :inert="open?.row !== r || open.side !== 'delete'">
-          <button class="te-rows-act danger" type="button" @click="deleteLine(r)">
-            {{ t('rowDelete') }}
-          </button>
-        </div>
-        <div class="te-rows-tray actions" :inert="open?.row !== r || open.side !== 'actions'">
-          <button class="te-rows-act" type="button" @click="addObject(r)">
-            {{ t('rowAddObject') }}
-          </button>
-          <button class="te-rows-act" type="button" @click="addLineBelow(r)">
-            {{ t('rowAddLine') }}
-          </button>
-          <button v-if="!bandOf(r)" class="te-rows-act" type="button" @click="makeBand(r)">
-            {{ t('rowMakeBand') }}
-          </button>
-        </div>
-        <div
-          class="te-rows-line"
-          :class="{ empty: isEmpty(r), dragging: drag?.row === r }"
-          :style="{ transform: `translateX(${offset(r)}px)` }"
-          tabindex="0"
-          :aria-label="t('rowLine', { n: r })"
-          @pointerdown="onDown($event, r)"
-          @pointermove="onMove"
-          @pointerup="onUp"
-          @pointercancel="onUp"
-          @click.capture="onClickCapture($event, r)"
-          @keydown="onKey($event, r)"
+    <div class="te-rows-list">
+      <template v-for="r in lines" :key="r">
+        <button
+          v-if="bandStarting(r)"
+          class="te-rows-band"
+          :class="{
+            loop: !!bandStarting(r)!.source,
+            selected: bandStarting(r)!.id === selectedBandId,
+          }"
+          type="button"
+          @click="selectBand(bandStarting(r)!.id)"
         >
-          <button
-            v-for="el in byRow.get(r) ?? []"
-            :key="el.id"
-            class="te-rows-chip"
-            :class="[
-              el.type,
-              { selected: el.id === selectedId, bold: el.style?.bold, warn: !!chipWarning(el) },
-            ]"
-            type="button"
-            :title="chipWarning(el)"
-            @click="selectElement(el.id)"
+          {{ bandDescription(bandStarting(r)!, t) }}
+        </button>
+        <div class="te-rows-swipe" :class="{ 'in-band': !!bandOf(r), loop: !!bandOf(r)?.source }">
+          <div class="te-rows-tray delete" :inert="open?.row !== r || open.side !== 'delete'">
+            <button class="te-rows-act" type="button" @click="deleteLine(r)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+              </svg>
+              {{ t('rowDelete') }}
+            </button>
+          </div>
+          <div class="te-rows-tray actions" :inert="open?.row !== r || open.side !== 'actions'">
+            <button class="te-rows-act" type="button" @click="addObject(r)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="3" />
+                <path d="M12 8v8M8 12h8" />
+              </svg>
+              {{ t('rowAddObject') }}
+            </button>
+            <button class="te-rows-act" type="button" @click="addLineBelow(r)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6h16M4 11h16M4 16h8M18 14v6M15 17h6" />
+              </svg>
+              {{ t('rowAddLine') }}
+            </button>
+            <button v-if="!bandOf(r)" class="te-rows-act" type="button" @click="makeBand(r)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+                <path d="M20 4v4h-4" />
+              </svg>
+              {{ t('rowMakeBand') }}
+            </button>
+          </div>
+          <div
+            class="te-rows-line"
+            :class="{ empty: isEmpty(r), dragging: drag?.row === r }"
+            :style="{ transform: `translateX(${offset(r)}px)` }"
+            tabindex="0"
+            :aria-label="t('rowLine', { n: r })"
+            @pointerdown="onDown($event, r)"
+            @pointermove="onMove"
+            @pointerup="onUp"
+            @pointercancel="onUp"
+            @click.capture="onClickCapture($event, r)"
+            @keydown="onKey($event, r)"
           >
-            <span v-if="chipWarning(el)" aria-hidden="true">⚠ </span>{{ chipText(el) }}
-          </button>
-          <span v-if="isEmpty(r)" class="te-rows-blank">{{ t('rowBlank') }}</span>
+            <button
+              v-for="el in byRow.get(r) ?? []"
+              :key="el.id"
+              class="te-rows-chip"
+              :class="[
+                el.type,
+                {
+                  selected: el.id === selectedId,
+                  bold: el.style?.bold,
+                  warn: !!chipWarning(el),
+                },
+              ]"
+              type="button"
+              :title="chipWarning(el)"
+              @click="selectElement(el.id)"
+            >
+              <span v-if="chipWarning(el)" aria-hidden="true">⚠ </span>{{ chipText(el) }}
+            </button>
+            <!-- striped like the canvas's empty space; the words are for screen readers -->
+            <span v-if="isEmpty(r)" class="te-sr-only">{{ t('rowBlank') }}</span>
+          </div>
         </div>
-      </div>
-    </template>
-    <button class="te-rows-append" type="button" @click="insertRow(rowCount, rowCount)">
-      {{ t('rowsAppend') }}
-    </button>
+      </template>
+      <button class="te-rows-append" type="button" @click="insertRow(rowCount, rowCount)">
+        {{ t('rowsAppend') }}
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* One surface with hairline dividers (a mail-list), not a stack of cards: rows
+   touch, and inside a row only data carries a tint. Boxes inside boxes were
+   what made the list read busy. */
 .te-rows {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.5rem;
 }
 .te-rows-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.2rem;
 }
 .te-rows-hint {
   margin: 0;
@@ -334,62 +357,101 @@ function deleteLine(r: number) {
   background: color-mix(in srgb, var(--te-primary) 14%, transparent);
   color: var(--te-primary);
 }
+.te-rows-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--te-border);
+  border-radius: var(--te-radius);
+  background: var(--te-card);
+  overflow: hidden;
+}
+/* a band reads as a section header inside the list */
 .te-rows-band {
-  align-self: flex-start;
-  display: inline-flex;
+  display: flex;
+  align-items: center;
   gap: 0.35rem;
-  margin-top: 0.4rem;
-  padding: 0.25rem 0.6rem;
+  min-height: 2rem;
+  padding: 0 0.9rem;
   border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  border-bottom: 1px solid var(--te-border);
+  background: color-mix(in srgb, #f59e0b 9%, var(--te-card));
   color: #b45309;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
   cursor: pointer;
 }
 .te-rows-band.loop {
-  background: color-mix(in srgb, var(--te-primary) 14%, transparent);
+  background: color-mix(in srgb, var(--te-primary) 7%, var(--te-card));
   color: var(--te-primary);
 }
 .te-rows-band.selected {
-  outline: 2px solid var(--te-ring);
+  box-shadow: inset 0 0 0 2px var(--te-ring);
 }
-/* a line: its content slides over the two action trays behind it */
+/* a line: its content slides over the action slabs behind it */
 .te-rows-swipe {
   position: relative;
   overflow: hidden;
-  border-radius: var(--te-radius);
-  background: var(--te-muted);
+  border-bottom: 1px solid var(--te-border);
 }
 .te-rows-tray {
   position: absolute;
   top: 0;
   bottom: 0;
   display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0 0.4rem;
 }
 .te-rows-tray.delete {
   left: 0;
-  background: color-mix(in srgb, #dc2626 14%, var(--te-card));
+  background: #dc2626;
 }
 .te-rows-tray.actions {
   right: 0;
+  background: var(--te-primary);
+}
+.te-rows-act {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-width: 4.6rem;
+  padding: 0 0.6rem;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.te-rows-tray.actions .te-rows-act + .te-rows-act {
+  box-shadow: inset 1px 0 0 rgb(255 255 255 / 0.18);
+}
+.te-rows-act:active {
+  background: rgb(0 0 0 / 0.12);
+}
+.te-rows-act svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .te-rows-line {
   position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.3rem;
-  min-height: 2.75rem;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--te-border);
-  border-radius: var(--te-radius);
+  gap: 0.35rem 0.5rem;
+  min-height: 3rem;
+  padding: 0.45rem 0.9rem;
   background: var(--te-card);
-  transition: transform 0.18s ease-out;
+  transition: transform 0.2s ease-out;
   /* vertical pans scroll the list; horizontal ones are the swipe */
   touch-action: pan-y;
   user-select: none;
@@ -402,85 +464,79 @@ function deleteLine(r: number) {
   outline-offset: -2px;
 }
 .te-rows-swipe.in-band .te-rows-line {
-  border-left: 3px solid #f59e0b;
+  box-shadow: inset 3px 0 0 #f59e0b;
 }
 .te-rows-swipe.in-band.loop .te-rows-line {
-  border-left-color: var(--te-primary);
+  box-shadow: inset 3px 0 0 var(--te-primary);
 }
+/* an empty line: the canvas's overflow stripes, no words */
 .te-rows-line.empty {
-  min-height: 2.2rem;
-  border-style: dashed;
+  min-height: 1.6rem;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 6px, rgba(0, 0, 0, 0.035) 6px 12px),
+    var(--te-muted);
 }
 .te-rows-chip {
   max-width: 100%;
-  min-height: 2rem;
-  padding: 0.2rem 0.55rem;
-  border: 1px solid var(--te-border);
+  min-height: 1.9rem;
+  padding: 0.2rem 0.45rem;
+  border: 0;
   border-radius: calc(var(--te-radius) - 2px);
-  background: var(--te-card);
+  background: transparent;
   color: inherit;
   font-family: ui-monospace, 'DejaVu Sans Mono', monospace;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
 }
+/* static text is just text, as on the ticket */
+.te-rows-chip.text {
+  padding-inline: 0.1rem;
+}
 .te-rows-chip.bold {
   font-weight: 700;
 }
 .te-rows-chip.variable {
-  background: color-mix(in srgb, var(--te-primary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--te-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--te-primary) 11%, transparent);
   color: var(--te-primary);
 }
 .te-rows-chip.qr,
 .te-rows-chip.barcode,
 .te-rows-chip.image,
 .te-rows-chip.marker {
-  border-style: dashed;
+  background: var(--te-muted);
   color: var(--te-muted-fg);
+  font-family: inherit;
+  font-size: 0.75rem;
 }
 .te-rows-chip.warn {
-  border-color: #d97706;
-  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
   color: #b45309;
 }
 .te-rows-chip.selected {
   outline: 2px solid var(--te-ring);
   outline-offset: 1px;
 }
-.te-rows-blank {
-  font-size: 0.75rem;
-  color: var(--te-muted-fg);
-  font-style: italic;
-}
-.te-rows-act {
-  min-height: 2.2rem;
-  padding: 0.3rem 0.55rem;
-  border: 1px solid var(--te-input);
-  border-radius: calc(var(--te-radius) - 2px);
-  background: var(--te-card);
-  color: inherit;
-  font: inherit;
-  font-size: 0.78rem;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.te-rows-act.danger {
-  border-color: #dc2626;
-  background: #dc2626;
-  color: #fff;
-}
 .te-rows-append {
-  min-height: 2.6rem;
-  margin-top: 0.3rem;
-  border: 1px dashed var(--te-input);
-  border-radius: var(--te-radius);
+  min-height: 2.75rem;
+  border: 0;
   background: transparent;
   color: var(--te-primary);
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+}
+.te-rows-append:active {
+  background: var(--te-accent);
+}
+.te-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 </style>
