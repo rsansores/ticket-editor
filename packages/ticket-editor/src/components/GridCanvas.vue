@@ -27,6 +27,13 @@ const props = defineProps<{
   loopSources?: { path: string; key: string }[]
   /** All leaf variables, for the condition builder. */
   allVars?: { path: string; key: string }[]
+  /**
+   * The sample text a variable element shows. Defaults to resolving its path in
+   * `variables`; the editor also resolves calculated values through it.
+   */
+  sampleOf?: (el: Element) => string | undefined
+  /** Show variable names instead of their sample values. */
+  showFields?: boolean
 }>()
 const emit = defineEmits<{
   'update:element': [el: Element]
@@ -54,7 +61,7 @@ const contentCols = computed(() => Math.max(1, width.value - ml.value - mr.value
 
 function sampleValue(el: Element): string | undefined {
   if (el.type !== 'variable' || !el.path) return undefined
-  return resolvePath(props.variables, el.path)
+  return props.sampleOf ? props.sampleOf(el) : resolvePath(props.variables, el.path)
 }
 function computeFp(el: Element): Footprint {
   if (el.type === 'marker') {
@@ -137,6 +144,14 @@ const gutterRows = computed(() => effectiveRows.value)
 function isRowEmpty(cr: number): boolean {
   return !occupiedRows.value.has(cr)
 }
+// Rows the selected element spans: their gutter buttons stay visible, so the
+// line actions are where the user is already working without hovering.
+const selectedRows = computed(() => {
+  const set = new Set<number>()
+  const el = props.doc.elements.find((e) => e.id === props.selectedId)
+  if (el) for (let r = el.row; r < el.row + fp(el).rows; r++) set.add(r)
+  return set
+})
 
 // ---- flow bands (loops / conditions) ---------------------------------------
 const regionList = computed<Region[]>(() => props.doc.regions ?? [])
@@ -245,7 +260,10 @@ function isUnavailable(el: Element): boolean {
 function label(el: Element): string {
   if (isUnavailable(el)) return t('unavailable')
   if (el.type === 'marker') return `✂ ${el.name ?? ''}`
-  return el.type === 'variable' ? (el.path ?? '') : (el.content ?? '')
+  if (el.type !== 'variable') return el.content ?? ''
+  // A variable reads as its sample value; with no sample (or in fields mode) it
+  // falls back to its name.
+  return (!props.showFields && sampleValue(el)) || (el.path ?? '')
 }
 
 // ---- drag (free, snaps to cells, never blocked) ----------------------------
@@ -289,7 +307,7 @@ function onPointerUp() {
           v-for="cr in gutterRows"
           :key="cr - 1"
           class="te-gutter-row"
-          :class="{ empty: isRowEmpty(cr - 1) }"
+          :class="{ empty: isRowEmpty(cr - 1), active: selectedRows.has(cr - 1) }"
           :style="{ top: (mt + (cr - 1)) * ch + 'px', height: ch + 'px' }"
         >
           <button
@@ -406,6 +424,7 @@ function onPointerUp() {
             offpaper: isOffPaper(el) && el.type !== 'marker',
             unavailable: isUnavailable(el),
           }"
+          :title="el.type === 'variable' ? el.path : undefined"
           :style="{
             left: (ml + el.col) * cw + 'px',
             top: (mt + el.row + (el.y_offset ?? 0)) * ch + 'px',
@@ -469,6 +488,9 @@ function onPointerUp() {
 <style scoped>
 .te-canvas-wrap {
   overflow: auto;
+  /* Reserve the vertical scrollbar's room even before rows overflow, so a long
+     ticket appearing doesn't shrink the width Fit measured. */
+  scrollbar-gutter: stable;
   padding: 1.25rem;
   /* the overflow zone: greyed area beyond the paper */
   background:
@@ -601,6 +623,22 @@ function onPointerUp() {
   border-color: var(--te-border);
   background: transparent;
   cursor: default;
+}
+/* Line actions appear on the row being pointed at (or the selected element's
+   rows), not as a column of 30 buttons. Touch has no hover: always shown. */
+.te-gutter-row:not(.append) .te-gutter-btn {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.te-gutter-row:hover .te-gutter-btn,
+.te-gutter-row.active .te-gutter-btn,
+.te-gutter-row .te-gutter-btn:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .te-gutter-row:not(.append) .te-gutter-btn {
+    opacity: 1;
+  }
 }
 .te-canvas {
   position: relative;

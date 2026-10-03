@@ -10,6 +10,7 @@ export type {
   EditorSelection,
 } from './core/useTicketEditor'
 export { default as TicketEditorToolbar } from './parts/TicketEditorToolbar.vue'
+export { default as TicketEditorObjects } from './parts/TicketEditorObjects.vue'
 export { default as TicketEditorVariables } from './parts/TicketEditorVariables.vue'
 export { default as TicketEditorCanvas } from './parts/TicketEditorCanvas.vue'
 export { default as TicketEditorPreview } from './parts/TicketEditorPreview.vue'

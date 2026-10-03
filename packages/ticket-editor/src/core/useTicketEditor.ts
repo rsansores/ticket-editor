@@ -19,6 +19,7 @@ import {
   type MaybeRefOrGetter,
 } from 'vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from '../lib/tree'
+import { resolvePath } from '../lib/layout'
 import {
   previewComputed,
   previewRowComputed,
@@ -33,6 +34,7 @@ import type {
   Computed,
   ComputedResult,
   Element,
+  NumberFormat,
   Region,
   TicketDoc,
   VariableType,
@@ -66,8 +68,11 @@ export interface TicketEditorOptions {
   canSave?: MaybeRefOrGetter<boolean>
 }
 
-/** What was just selected. Fired only for a real selection, never a clear. */
-export type EditorSelection = { kind: 'element' | 'band'; id: string }
+/**
+ * What the user just asked to inspect: an element, a band, or the whole
+ * ticket's settings. Fired for a real request, never for a plain clear.
+ */
+export type EditorSelection = { kind: 'element' | 'band'; id: string } | { kind: 'ticket' }
 
 function blankDoc(): TicketDoc {
   return {
@@ -93,6 +98,17 @@ function blankDoc(): TicketDoc {
 // definition (it is persisted as JSON), and it strips Vue's reactive proxies.
 function snapshot(d: TicketDoc): TicketDoc {
   return JSON.parse(JSON.stringify(d)) as TicketDoc
+}
+
+// Decimals and thousands grouping for the canvas, mirroring `format.rs` closely
+// enough to read right (`24.5` → `24.50`). Rounding modes are not replicated:
+// the 1:1 preview is the exact print, this is only the sketch.
+function displayNumber(raw: string, fmt: NumberFormat): string {
+  const n = Number(raw.trim().replace(/,/g, ''))
+  if (!Number.isFinite(n)) return raw
+  const [int, frac] = Math.abs(n).toFixed(Math.max(0, fmt.decimals)).split('.')
+  const grouped = fmt.thousands ? int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : int
+  return (n < 0 ? '-' : '') + grouped + (frac ? `.${frac}` : '')
 }
 
 function createTicketEditor(opts: TicketEditorOptions) {
@@ -223,6 +239,15 @@ function createTicketEditor(opts: TicketEditorOptions) {
     }
   }
 
+  // The inspector shows the ticket's settings when nothing is selected; this
+  // clears the selection AND tells the layout to bring the inspector into view
+  // (a plain clear, like clicking empty canvas, doesn't).
+  function showTicketSettings() {
+    selectedId.value = null
+    selectedBandId.value = null
+    for (const fn of selectListeners) fn({ kind: 'ticket' })
+  }
+
   // preview data: real variables, or a reshuffled clone when the user asks.
   const shuffled = ref<Record<string, unknown> | null>(null)
   const previewData = computed(() => shuffled.value ?? variables())
@@ -236,6 +261,9 @@ function createTicketEditor(opts: TicketEditorOptions) {
 
   // view state
   const zoom = ref(1.0)
+  // The canvas shows sample values by default (it reads like the ticket); this
+  // flips it to the variable names, for wiring work.
+  const showFields = ref(false)
 
   let seq = 0
   function newId() {
@@ -552,6 +580,32 @@ function createTicketEditor(opts: TicketEditorOptions) {
     selectElement(el.id)
   }
 
+  // The sample text a variable element shows on the canvas: host data, a
+  // calculated value, or a band's calculated column (first data row). Raw, not
+  // formatted — the 1:1 preview is the exact print; this only has to read right.
+  function sampleOf(el: Element): string | undefined {
+    const raw = rawSampleOf(el)
+    return raw !== undefined && el.type === 'variable' && el.number
+      ? displayNumber(raw, el.number)
+      : raw
+  }
+  function rawSampleOf(el: Element): string | undefined {
+    if (el.type !== 'variable' || !el.path) return undefined
+    const path = el.path
+    if (path.startsWith('calc.')) {
+      const r = calcReports.value[path.slice('calc.'.length)]
+      return r && !r.error && r.value !== '' ? r.value : undefined
+    }
+    if (path.startsWith('row.')) {
+      const band = (doc.value.regions ?? []).find(
+        (r) => el.row >= r.start_row && el.row < r.end_row,
+      )
+      const r = band && rowCalcReports.value[band.id]?.[path.slice('row.'.length)]
+      return r && !r.error && r.value !== '' ? r.value : undefined
+    }
+    return resolvePath(previewData.value, path)
+  }
+
   // --- missing-fields badge ---------------------------------------------------
   // Paths the document references that don't exist in the sample data. On a REAL
   // print these render empty, so surface them while designing (the preview shows
@@ -818,12 +872,15 @@ function createTicketEditor(opts: TicketEditorOptions) {
     selectedCondVars,
     selectElement,
     selectBand,
+    showTicketSettings,
     onSelect,
     // preview
     previewData,
     reshuffle,
     missingPaths,
     zoom,
+    showFields,
+    sampleOf,
     // elements
     addVariable,
     addText,

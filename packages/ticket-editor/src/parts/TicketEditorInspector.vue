@@ -1,12 +1,19 @@
 <script setup lang="ts">
-// The properties of whatever is selected: a band's config, or the selected
-// element's modifiers (an empty prompt when nothing is). Belongs in a right
-// rail or drawer; open it from the context's `onSelect`.
+// The properties of whatever is selected: a band's config, the selected
+// element's properties, or — with nothing selected — the whole ticket's paper
+// settings. Belongs in a right rail or drawer; open it from `onSelect`.
 import BandPanel from '../components/BandPanel.vue'
+import DocPanel from '../components/DocPanel.vue'
 import ModifierPanel from '../components/ModifierPanel.vue'
 import { useTicketEditorContext } from '../core/useTicketEditor'
 
 const {
+  doc,
+  paperId,
+  dotWidth,
+  dotWidthOk,
+  selectPaper,
+  setWidthChars,
   selected,
   selectedType,
   selectedBand,
@@ -43,7 +50,7 @@ const {
     @place-calc="placeRowCalc"
   />
   <ModifierPanel
-    v-else
+    v-else-if="selected"
     class="te-part"
     :element="selected"
     :var-type="selectedType"
@@ -56,5 +63,15 @@ const {
     @update:element="updateElement"
     @remove="removeElement"
     @collapse-row="collapseRow"
+  />
+  <DocPanel
+    v-else
+    class="te-part"
+    :paper-id="paperId"
+    :width-chars="doc.paper.width_chars"
+    :dot-width="dotWidth"
+    :dot-width-ok="dotWidthOk"
+    @select-paper="selectPaper"
+    @set-width="setWidthChars"
   />
 </template>

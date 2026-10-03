@@ -176,7 +176,16 @@ function onSave(d: TicketDoc) {
 </script>
 
 <template>
-  <div style="height: 100%; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+  <div
+    style="
+      height: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    "
+  >
     <div style="display: flex; gap: 6px; align-items: center; font: 13px sans-serif">
       <span style="color: #64748b">Host locale:</span>
       <button :style="locBtn(locale === 'en')" @click="locale = 'en'">EN</button>

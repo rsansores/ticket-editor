@@ -151,6 +151,20 @@ const {
 .te-calc-icon:hover {
   color: inherit;
 }
+/* Edit / delete show on the row being pointed at, not on every row at once.
+   Touch has no hover: always shown. */
+.te-calc-item .te-calc-icon {
+  opacity: 0;
+}
+.te-calc-item:hover .te-calc-icon,
+.te-calc-item:focus-within .te-calc-icon {
+  opacity: 1;
+}
+@media (hover: none) {
+  .te-calc-item .te-calc-icon {
+    opacity: 1;
+  }
+}
 .te-calc-empty {
   margin: 0 0 0.4rem;
   color: var(--te-muted-fg);

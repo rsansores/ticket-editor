@@ -1,23 +1,16 @@
 <script setup lang="ts">
-// The default toolbar: paper, zoom, add-element buttons, print and save. A host
-// with its own buttons skips this and calls the same actions on the context.
-import { PAPER_PRESETS } from '../lib/paper'
+// The default toolbar: the ticket's settings, the paper warning when it
+// applies, print and save. Objects are added from the Objects panel, paper
+// setup lives in the inspector and view controls float on the canvas, so this
+// stays one short row. A host with its own buttons skips this and calls the
+// same actions on the context.
 import { useTicketEditorContext } from '../core/useTicketEditor'
 
 const {
   t,
-  doc,
-  zoom,
-  paperId,
-  selectPaper,
-  setWidthChars,
   dotWidth,
   dotWidthOk,
-  addText,
-  addImage,
-  addQr,
-  addBarcode,
-  addMarker,
+  showTicketSettings,
   printing,
   printError,
   print,
@@ -30,54 +23,39 @@ const {
 <template>
   <header class="te-part te-toolbar">
     <strong class="te-title">{{ t('title') }}</strong>
-    <label class="te-inline"
-      >{{ t('paper') }}
-      <select
-        class="te-select"
-        :value="paperId"
-        :title="t('paperTip')"
-        @change="selectPaper(($event.target as HTMLSelectElement).value)"
+    <button
+      class="te-btn te-btn-ghost te-btn-icon"
+      type="button"
+      :title="t('ticketSettingsTip')"
+      @click="showTicketSettings"
+    >
+      <svg
+        class="te-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
       >
-        <option v-for="p in PAPER_PRESETS" :key="p.id" :value="p.id">
-          {{ t('paperOption', { mm: p.paperMm, dots: p.dots }) }}
-        </option>
-        <option value="custom">{{ t('paperCustom') }}</option>
-      </select>
-    </label>
-    <label class="te-inline"
-      >{{ t('width') }}
-      <input
-        class="te-num"
-        type="number"
-        min="16"
-        max="120"
-        :value="doc.paper.width_chars"
-        @input="setWidthChars(+($event.target as HTMLInputElement).value)"
-      />
-    </label>
-    <label class="te-inline"
-      >{{ t('zoom') }}
-      <input type="range" min="0.8" max="2.2" step="0.1" v-model.number="zoom" />
-      <span class="te-muted">{{ zoom.toFixed(1) }}×</span>
-    </label>
-    <button class="te-btn te-btn-ghost" type="button" @click="addText">{{ t('addText') }}</button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addImage">
-      {{ t('addImage') }}
+        <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" />
+        <circle cx="16" cy="6" r="2" />
+        <circle cx="10" cy="12" r="2" />
+        <circle cx="18" cy="18" r="2" />
+      </svg>
+      {{ t('ticketSettings') }}
     </button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addQr">{{ t('addQr') }}</button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addBarcode">
-      {{ t('addBarcode') }}
-    </button>
-    <button class="te-btn te-btn-ghost" type="button" @click="addMarker">
-      {{ t('addMarker') }}
-    </button>
-    <span
+    <!-- The ticket settings are where this is fixed. -->
+    <button
       v-if="!dotWidthOk"
       class="te-chip te-chip-warn"
+      type="button"
       :title="t('dotWidthWarnTip', { px: dotWidth })"
+      @click="showTicketSettings"
     >
       {{ t('dotWidthWarn', { px: dotWidth }) }}
-    </span>
+    </button>
     <div class="te-spacer" />
     <span v-if="printError" class="te-chip te-chip-warn" :title="printError">{{ printError }}</span>
     <button
@@ -130,28 +108,6 @@ const {
 .te-spacer {
   flex: 1;
 }
-.te-inline {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  color: var(--te-muted-fg);
-}
-.te-muted {
-  color: var(--te-muted-fg);
-}
-.te-select {
-  /* Wide enough for "80 mm (576 dots)" plus room for the native chevron, which
-     sat on top of the text when this reused .te-num (3.6rem, sized for a
-     two-digit number box). */
-  padding: 0.25rem 0.4rem;
-  padding-right: 1.6rem;
-  border: 1px solid var(--te-input);
-  border-radius: calc(var(--te-radius) - 2px);
-  background: var(--te-card);
-  color: inherit;
-  font: inherit;
-}
 
 .te-btn-icon {
   display: inline-flex;
@@ -163,16 +119,6 @@ const {
   width: 1.05em;
   height: 1.05em;
   flex: none;
-}
-
-.te-num {
-  width: 3.6rem;
-  padding: 0.25rem 0.4rem;
-  border: 1px solid var(--te-input);
-  border-radius: calc(var(--te-radius) - 2px);
-  background: var(--te-card);
-  color: inherit;
-  font: inherit;
 }
 .te-btn {
   padding: 0.4rem 0.75rem;

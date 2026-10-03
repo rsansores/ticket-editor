@@ -12,7 +12,7 @@
 import { ref } from 'vue'
 import { useTicketEditor } from './core/useTicketEditor'
 import TicketEditorToolbar from './parts/TicketEditorToolbar.vue'
-import TicketEditorVariables from './parts/TicketEditorVariables.vue'
+import TicketEditorObjects from './parts/TicketEditorObjects.vue'
 import TicketEditorCanvas from './parts/TicketEditorCanvas.vue'
 import TicketEditorPreview from './parts/TicketEditorPreview.vue'
 import TicketEditorInspector from './parts/TicketEditorInspector.vue'
@@ -38,7 +38,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [doc: TicketDoc] }>()
 
-const { t, selectedBand, onSelect } = useTicketEditor({
+const { t, selected, selectedBand, onSelect } = useTicketEditor({
   modelValue: () => props.modelValue,
   variables: () => props.variables,
   variableTypes: () => props.variableTypes,
@@ -67,14 +67,14 @@ onSelect(() => {
           class="te-rail-toggle"
           type="button"
           @click="leftOpen = !leftOpen"
-          :aria-label="leftOpen ? t('collapse') : t('railVariables')"
+          :aria-label="leftOpen ? t('collapse') : t('railObjects')"
           :aria-expanded="leftOpen"
-          :title="leftOpen ? t('collapse') : t('railVariables')"
+          :title="leftOpen ? t('collapse') : t('railObjects')"
         >
           {{ leftOpen ? '‹' : '›' }}
         </button>
         <div v-if="leftOpen" class="te-rail-inner">
-          <TicketEditorVariables />
+          <TicketEditorObjects />
         </div>
       </aside>
 
@@ -98,7 +98,9 @@ onSelect(() => {
           {{ rightOpen ? '›' : '‹' }}
         </button>
         <div v-if="rightOpen" class="te-rail-inner">
-          <h3 class="te-rail-title">{{ selectedBand ? t('railBand') : t('railModifiers') }}</h3>
+          <h3 class="te-rail-title">
+            {{ selectedBand ? t('railBand') : selected ? t('railModifiers') : t('railTicket') }}
+          </h3>
           <TicketEditorInspector />
         </div>
       </aside>

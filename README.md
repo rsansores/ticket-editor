@@ -154,7 +154,7 @@ import {
   useTicketEditor,
   TicketEditorCanvas,
   TicketEditorPreview,
-  TicketEditorVariables,
+  TicketEditorObjects,
   TicketEditorInspector,
   TicketEditorDialogs,
 } from '@ticket-editor/vue'
@@ -177,25 +177,26 @@ editor.onSelect(() => (inspectorOpen.value = true))
   <TicketEditorCanvas />
   <TicketEditorPreview />
   <TicketEditorDialogs />
-  <MySheet side="left"><TicketEditorVariables /></MySheet>
+  <MySheet side="left"><TicketEditorObjects /></MySheet>
   <MySheet side="right" v-model:open="inspectorOpen"><TicketEditorInspector /></MySheet>
 </template>
 ```
 
 | Part | What it is |
 |------|------------|
-| `TicketEditorToolbar` | The built-in toolbar (paper, zoom, add, print, save). Skip it to use your own buttons. |
-| `TicketEditorVariables` | Variable tree and calculated values. Clicking one places it. |
-| `TicketEditorCanvas` | The structural grid editor. |
+| `TicketEditorToolbar` | The built-in toolbar (ticket settings, print, save). Skip it to use your own buttons. |
+| `TicketEditorObjects` | Everything that can go on the ticket: static objects (text, image, QR, barcode, cut), variables and calculated values. Clicking one places it. |
+| `TicketEditorVariables` | Just the variables and calculated values, if you place the static objects yourself. |
+| `TicketEditorCanvas` | The structural grid editor, with its zoom / fit / fields controls. |
 | `TicketEditorPreview` | The 1:1 wasm preview. |
-| `TicketEditorInspector` | Properties of the selected element or band. |
+| `TicketEditorInspector` | Properties of the selected element or band, or the ticket's paper settings when nothing is selected. |
 | `TicketEditorDialogs` | The formula dialogs. Mount once, anywhere. |
 
 The parts reach the state through provide/inject, so they still work when
 teleported into a sheet. Each part carries the theme tokens itself, so it doesn't
 need to sit inside the editor's root element. Everything a toolbar or menu needs
 is on the context that `useTicketEditor()` returns: `addText`, `addQr`,
-`selectPaper`, `zoom`, `print`, `save`, the selection, and so on.
+`showTicketSettings`, `selectPaper`, `zoom`, `print`, `save`, the selection, and so on.
 `useTicketEditorContext()` returns the same object in any descendant. The demo
 at `?layout=custom` is a working example.
 
