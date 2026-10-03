@@ -19,7 +19,7 @@ import {
   type MaybeRefOrGetter,
 } from 'vue'
 import { deriveTree, guessLength, pathTypeMap, randomizeSample } from '../lib/tree'
-import { resolvePath } from '../lib/layout'
+import { elementFootprint, resolvePath } from '../lib/layout'
 import {
   previewComputed,
   previewRowComputed,
@@ -274,6 +274,35 @@ function createTicketEditor(opts: TicketEditorOptions) {
     return doc.value.elements.reduce((m, e) => Math.max(m, e.row + 1), 0)
   }
 
+  // Where the next added element goes. Null (the default) appends it on a new
+  // line at the bottom; a row number puts it on THAT line, after whatever is
+  // already there — the phone layout's per-line "+" sets it before opening the
+  // picker. Consumed (reset to null) by the add.
+  const addTarget = ref<number | null>(null)
+  // First free column on a line: one past the right edge of everything that
+  // occupies it (a gap so values don't run together), or 0 on an empty line.
+  // Never moves existing elements; a new one that doesn't fit still lands past
+  // the edge, where the canvas flags it like any other.
+  function nextFreeCol(row: number): number {
+    let end = -1
+    for (const e of doc.value.elements) {
+      if (e.type === 'marker') continue
+      const f = elementFootprint(e, doc.value.paper, sampleOf(e))
+      if (row >= e.row && row < e.row + f.rows) end = Math.max(end, e.col + f.cols)
+    }
+    return end < 0 ? 0 : end + 1
+  }
+  function pushNew(el: Element) {
+    const row = addTarget.value
+    if (row !== null) {
+      addTarget.value = null
+      el.row = row
+      el.col = el.type === 'marker' ? 0 : nextFreeCol(row)
+    }
+    doc.value.elements.push(el)
+    selectElement(el.id)
+  }
+
   function addVariable(node: VarNode) {
     const t = typeOf(node.path)
     const el: Element = {
@@ -293,13 +322,11 @@ function createTicketEditor(opts: TicketEditorOptions) {
     } else if (t === 'date') {
       el.date_format = 'DD/MM/YYYY HH:mm'
     }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
   function addText() {
     const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'text', content: 'Text' }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
   function addQr() {
     const el: Element = {
@@ -311,8 +338,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
       from_variable: false,
       size: 10,
     }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
   function addBarcode() {
     const el: Element = {
@@ -326,8 +352,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
       width: 24,
       height: 4,
     }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
 
   // --- calculated variables ---
@@ -576,8 +601,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
     } else if (rep?.value) {
       el.length = Math.min(40, Math.max(6, rep.value.length + 2))
     }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
 
   // The sample text a variable element shows on the canvas: host data, a
@@ -687,8 +711,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
   // common case (one receipt = cut at the end).
   function addMarker() {
     const el: Element = { id: newId(), row: nextRow(), col: 0, type: 'marker', name: 'cut' }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
   function addImage() {
     const el: Element = {
@@ -702,8 +725,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
       h: 6,
       mode: { kind: 'threshold', level: 128 },
     }
-    doc.value.elements.push(el)
-    selectElement(el.id)
+    pushNew(el)
   }
   function updateElement(next: Element) {
     const i = doc.value.elements.findIndex((e) => e.id === next.id)
@@ -748,6 +770,16 @@ function createTicketEditor(opts: TicketEditorOptions) {
       return [{ ...r, start_row: s, end_row: e }]
     })
     doc.value.paper.min_rows = Math.max(0, eff - 1)
+  }
+
+  // Delete a whole line WITH what starts on it (the phone's swipe-to-delete,
+  // which asks for a deliberate tap). Unlike deleteRow it doesn't need the line
+  // to be empty; the elements go, then the line closes up like deleteRow.
+  function removeLine(row: number, eff: number) {
+    const gone = new Set(doc.value.elements.filter((e) => e.row === row).map((e) => e.id))
+    doc.value.elements = doc.value.elements.filter((e) => !gone.has(e.id))
+    if (selectedId.value && gone.has(selectedId.value)) selectedId.value = null
+    deleteRow(row, eff)
   }
 
   // --- flow bands ---
@@ -880,6 +912,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
     missingPaths,
     zoom,
     showFields,
+    addTarget,
     sampleOf,
     // elements
     addVariable,
@@ -894,6 +927,7 @@ function createTicketEditor(opts: TicketEditorOptions) {
     collapseRow,
     insertRow,
     deleteRow,
+    removeLine,
     // bands
     createRegion,
     updateRegion,

@@ -105,6 +105,12 @@ const {
 .te-title {
   font-size: 0.95rem;
 }
+/* On a phone the host's own page already says where you are. */
+@container te-editor (max-width: 719px) {
+  .te-title {
+    display: none;
+  }
+}
 .te-spacer {
   flex: 1;
 }

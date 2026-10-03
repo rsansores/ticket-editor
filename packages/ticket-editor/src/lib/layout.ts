@@ -9,7 +9,7 @@
 // the actual value, so wrapped footprints take the resolved sample value as
 // input — the preview pane remains the exact source of truth.
 
-import type { Element } from '../types'
+import type { Element, Paper, TicketDoc } from '../types'
 
 export interface Footprint {
   scale: number
@@ -113,6 +113,57 @@ export function footprint(el: Element, contentCols: number, value?: string): Foo
   // Count code points (not UTF-16 units) to match the Rust renderer's char count.
   const bandChars = [...(el.content ?? '')].length || 1
   return { scale, bandChars, lines: 1, cols: bandChars * scale, rows: scale }
+}
+
+/** Printable width in characters (paper width minus horizontal margins). */
+export function printableCols(paper: Paper): number {
+  return Math.max(
+    1,
+    paper.width_chars - (paper.margin_left_chars ?? 0) - (paper.margin_right_chars ?? 0),
+  )
+}
+
+/**
+ * Footprint of any element kind on the design grid. Text and variables go
+ * through `footprint`; media and markers have their own boxes.
+ * @param value resolved sample value; needed to size a wrapped variable
+ */
+export function elementFootprint(el: Element, paper: Paper, value?: string): Footprint {
+  if (el.type === 'marker') {
+    // Zero ink on paper; on the canvas it reads as a full-width one-row bar so
+    // it's visible, selectable and draggable like everything else.
+    const w = printableCols(paper)
+    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: 1 }
+  }
+  if (el.type === 'image') {
+    const w = Math.max(1, el.w ?? 1)
+    const h = Math.max(1, el.h ?? 1)
+    return { scale: 1, bandChars: w, lines: h, cols: w, rows: h }
+  }
+  if (el.type === 'qr') {
+    const s = Math.max(1, el.size ?? 1)
+    // The QR is a pixel-square (s cells wide); its height in rows follows the cell aspect.
+    const rows = Math.max(
+      1,
+      Math.ceil((s * (paper.cell_width_px ?? 12)) / (paper.cell_height_px ?? 22)),
+    )
+    return { scale: 1, bandChars: s, lines: 1, cols: s, rows }
+  }
+  if (el.type === 'barcode') {
+    const w = Math.max(1, el.width ?? 1)
+    const h = Math.max(1, el.height ?? 1)
+    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: h }
+  }
+  return footprint(el, printableCols(paper), value)
+}
+
+/**
+ * Content height in rows: the greater of the lowest element and the explicit
+ * minimum (trailing whitespace) — exactly what the renderer produces.
+ */
+export function contentRows(doc: TicketDoc, fpOf: (el: Element) => Footprint): number {
+  const lowest = doc.elements.reduce((m, e) => Math.max(m, e.row + fpOf(e).rows), 0)
+  return Math.max(lowest, doc.paper.min_rows ?? 0, 1)
 }
 
 /** Do two elements' occupied cell rectangles intersect? */

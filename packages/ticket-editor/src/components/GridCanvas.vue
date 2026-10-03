@@ -10,7 +10,14 @@
 //   * overlaps are allowed but clearly flagged, never auto-resolved.
 import { computed, ref } from 'vue'
 import { RESERVED_ROW_NAMES, type Element, type Region, type TicketDoc } from '../types'
-import { footprint, overlappingIds, resolvePath, type Footprint } from '../lib/layout'
+import {
+  contentRows,
+  elementFootprint,
+  overlappingIds,
+  resolvePath,
+  type Footprint,
+} from '../lib/layout'
+import { bandDescription, leaf } from '../lib/bands'
 import { useT } from '../i18n'
 
 const t = useT()
@@ -64,29 +71,7 @@ function sampleValue(el: Element): string | undefined {
   return props.sampleOf ? props.sampleOf(el) : resolvePath(props.variables, el.path)
 }
 function computeFp(el: Element): Footprint {
-  if (el.type === 'marker') {
-    // Zero ink on paper; on the canvas it reads as a full-width one-row bar so
-    // it's visible, selectable and draggable like everything else.
-    const w = contentCols.value
-    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: 1 }
-  }
-  if (el.type === 'image') {
-    const w = Math.max(1, el.w ?? 1)
-    const h = Math.max(1, el.h ?? 1)
-    return { scale: 1, bandChars: w, lines: h, cols: w, rows: h }
-  }
-  if (el.type === 'qr') {
-    const s = Math.max(1, el.size ?? 1)
-    // The QR is a pixel-square (s cells wide); its height in rows follows the cell aspect.
-    const rows = Math.max(1, Math.ceil((s * cw.value) / ch.value))
-    return { scale: 1, bandChars: s, lines: 1, cols: s, rows }
-  }
-  if (el.type === 'barcode') {
-    const w = Math.max(1, el.width ?? 1)
-    const h = Math.max(1, el.height ?? 1)
-    return { scale: 1, bandChars: w, lines: 1, cols: w, rows: h }
-  }
-  return footprint(el, contentCols.value, sampleValue(el))
+  return elementFootprint(el, props.doc.paper, sampleValue(el))
 }
 // Footprints memoized once per render — every layout computed and the O(n²)
 // overlap check reuse this instead of recomputing (which thrashed on drag).
@@ -110,10 +95,7 @@ const displayCols = computed(() => {
 // Content height in rows: the greater of the lowest element and the explicit
 // minimum (trailing whitespace). This is exactly what the renderer produces, so
 // the editor grid matches the printed ticket — no phantom rows.
-const lowestBottom = computed(() =>
-  props.doc.elements.reduce((m, e) => Math.max(m, e.row + fp(e).rows), 0),
-)
-const effectiveRows = computed(() => Math.max(lowestBottom.value, props.doc.paper.min_rows ?? 0, 1))
+const effectiveRows = computed(() => contentRows(props.doc, fp))
 const displayRows = computed(() => mt.value + effectiveRows.value + mb.value)
 
 const printableRight = computed(() => width.value - mr.value)
@@ -161,34 +143,8 @@ function regionOf(row: number): Region | undefined {
 function regionIndex(id: string): number {
   return regionList.value.findIndex((r) => r.id === id) + 1
 }
-const opLabels: Record<string, string> = {
-  is_set: 'is set',
-  is_empty: 'is empty',
-  eq: '=',
-  ne: '≠',
-  gt: '>',
-  lt: '<',
-  gte: '≥',
-  lte: '≤',
-}
-function leaf(path: string): string {
-  return path.split('.').pop() ?? path
-}
-function opText(op: string): string {
-  if (op === 'is_set') return t('opIsSet')
-  if (op === 'is_empty') return t('opIsEmpty')
-  return opLabels[op] ?? op
-}
 function bandLabel(r: Region): string {
-  const n = regionIndex(r.id)
-  const parts: string[] = []
-  if (r.source) parts.push(t('bandForEach', { name: leaf(r.source) }))
-  if (r.condition) {
-    const c = r.condition
-    const val = c.op === 'is_set' || c.op === 'is_empty' ? '' : ` ${c.value ?? ''}`
-    parts.push(t('bandIf', { cond: `${leaf(c.var)} ${opText(c.op)}${val}` }))
-  }
-  return `${n}. ${parts.join('  ·  ')}`
+  return `${regionIndex(r.id)}. ${bandDescription(r, t)}`
 }
 
 // ---- band lane (create / select bands like git-gutter change bars) ---------
