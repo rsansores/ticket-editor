@@ -5,6 +5,11 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DEFAULT_PRESET, TicketEditor } from '../src'
 import type { TicketDoc, VariableType } from '../src'
+import CustomLayout from './CustomLayout.vue'
+
+// ?layout=custom swaps the built-in layout for a host-owned one built from the
+// connected parts — the reference for embedding in another design system.
+const customLayout = new URLSearchParams(location.search).get('layout') === 'custom'
 
 // Toggling the host locale flips the editor's language automatically.
 const { locale } = useI18n()
@@ -178,7 +183,14 @@ function onSave(d: TicketDoc) {
       <button :style="locBtn(locale === 'es')" @click="locale = 'es'">ES</button>
     </div>
     <div style="flex: 1; min-height: 0">
+      <CustomLayout
+        v-if="customLayout"
+        v-model="doc"
+        :variables="variables"
+        :variable-types="variableTypes"
+      />
       <TicketEditor
+        v-else
         v-model="doc"
         :variables="variables"
         :variable-types="variableTypes"

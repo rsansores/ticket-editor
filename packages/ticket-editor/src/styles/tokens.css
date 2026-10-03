@@ -8,8 +8,14 @@
  *   - Embedded in a themed host -> inherits --color-primary etc. -> looks native.
  *   - Standalone / OSS          -> uses the fallbacks below.      -> looks fine.
  * Zero dependency on the host's UI library; no adapter needed.
+ *
+ * `.te-part` marks each connected part (`TicketEditorCanvas`, …). A host that
+ * builds its own layout may teleport a part into a drawer outside any
+ * `.te-root`, so a part carries the tokens and font itself — everything except
+ * the root's own colour and background, which belong to the host's surface.
  */
-.te-root {
+.te-root,
+.te-part {
   --te-bg: var(--color-background, #ffffff);
   --te-fg: var(--color-foreground, #0b1220);
   --te-card: var(--color-card, #ffffff);
@@ -24,8 +30,6 @@
   --te-ring: var(--color-ring, var(--te-primary));
   --te-radius: var(--radius, 0.5rem);
 
-  color: var(--te-fg);
-  background: var(--te-bg);
   /* Keep the fallbacks OUTSIDE the var(): when a host sets `--font-sans` to a
      single Latin font (e.g. Inter), `var(--font-sans, a, b)` collapses to just
      that font with no fallbacks, so any glyph it lacks (arrows, the ⟳/↻ icons,
@@ -45,8 +49,15 @@
     'Noto Color Emoji';
   box-sizing: border-box;
 }
+.te-root {
+  color: var(--te-fg);
+  background: var(--te-bg);
+}
 .te-root *,
 .te-root *::before,
-.te-root *::after {
+.te-root *::after,
+.te-part *,
+.te-part *::before,
+.te-part *::after {
   box-sizing: border-box;
 }
